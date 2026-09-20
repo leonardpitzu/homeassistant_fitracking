@@ -644,4 +644,8 @@ Original integration by [@sbabcock23](https://github.com/sbabcock23), built on t
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](LICENSE), inherited from upstream and kept there: a fork cannot
+relicense the work it is derived from, only the modifications, and splitting the
+two would buy nothing. Every file under `custom_components/fitracking/` has been
+modified from the original, and most were rewritten outright — see [Differences
+from upstream](#differences-from-upstream) for what changed and why.
