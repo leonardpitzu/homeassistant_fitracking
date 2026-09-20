@@ -76,28 +76,27 @@ already ordered and gapless, so a card needs no arithmetic of its own:
 
 ```yaml
 day_minutes: 1440
-reported_minutes: 1367
-totals: {night_sleep: 513, day_sleep: 719, active: 79, awake: 0, offline: 59, no_data: 73}
+reported_minutes: 1390
+totals: {night_sleep: 715, day_sleep: 537, active: 79, awake: 0, offline: 59, no_data: 50}
 segments:
-  - {phase: night_sleep, start: 0, minutes: 513}
-  - {phase: active, start: 513, minutes: 6}
-  - {phase: day_sleep, start: 519, minutes: 73}
+  - {phase: night_sleep, start: 0, minutes: 56}
+  - {phase: active, start: 56, minutes: 3}
+  - {phase: night_sleep, start: 59, minutes: 454}
 ```
 
-Two things to know before reading the totals as durations. Fi stretches any event
-shorter than its minimum render width to that width, so short slices — the
-three-minute `active` stubs either side of a long rest — are placements, not
-measurements; the bar mirrors what the Fi app draws, and the `Active` stat sensor
-carries Fi's own figure. And the hours before midnight sit on *yesterday's* bar:
-a night is keyed by the evening it began, so today starts at 00:00 with whatever
-of last night ran past it.
+Fi stretches any event shorter than its minimum render width to that width, so
+short slices — the three-minute `active` stubs either side of a long rest — are
+placements, not measurements. The bar mirrors what the Fi app draws; the `Active`
+stat sensor carries Fi's own figure.
 
-A day is night, day, next night, and the two nights are recognised differently.
-The morning one is Fi's own: bounded by the settled session's `sleepEnd`, or left
-open while Fi still answers `Unavailable`, which is Fi saying the dog is *in* that
-night. The evening one cannot be — Fi does not settle it until the next morning —
-so it is read off the bar instead: rest still running at the collar's last report,
-begun after 18:00, is the night starting rather than another nap. Stirs shorter
+A day is night, day, next night, and a night always straddles two bars: its
+evening hours belong to the day it began, its remaining hours to the next one.
+The two ends are recognised differently. The morning one is Fi's own — bounded by
+the settled session's `sleepEnd`, or left open while Fi still answers
+`Unavailable`, which is Fi saying the dog is *in* that night. The evening one
+cannot be, because Fi does not settle a night until the morning after, so it is
+read off the bar instead: rest still running at the collar's last report, begun
+after 18:00, is the night starting rather than another nap. Stirs shorter
 than 15 minutes stay inside it, which is just above Fi's own render pad.
 
 Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `max`:
