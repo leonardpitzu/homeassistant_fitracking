@@ -1,4 +1,5 @@
-"""Platform for sensor integration."""
+"""Sensors for the Fi collar."""
+
 import logging
 
 from homeassistant.components.sensor import (
@@ -8,22 +9,19 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import PERCENTAGE, UnitOfLength, UnitOfTime
 from homeassistant.helpers.icon import icon_for_battery_level
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-)
 
 from .const import BEHAVIOR_META, DOMAIN, SENSOR_STATS_BY_TIME, SENSOR_STATS_BY_TYPE
+from .entity import FiBaseEntity, FiPetEntity
 
 LOGGER = logging.getLogger(__name__)
 
-# Per-stat metadata. "attr" is suffixed onto the period to build the pytryfi
-# attribute name, e.g. "daily" + "TotalDistance" -> pet.dailyTotalDistance.
+# "field" names the attribute on api.Stats holding this metric.
 # Nothing here is total_increasing: Fi revises these downward after first
 # reporting them, and HA's 10% reset tolerance is relative, so a small absolute
 # revision early in a period reads as a counter reset.
 STAT_META = {
     "STEPS": {
-        "attr": "Steps",
+        "field": "steps",
         "icon": "mdi:shoe-print",
         "unit": "steps",
         "divisor": 1,
@@ -32,7 +30,7 @@ STAT_META = {
         "state_class": SensorStateClass.MEASUREMENT,
     },
     "DISTANCE": {
-        "attr": "TotalDistance",
+        "field": "distance_m",
         "icon": "mdi:map-marker-distance",
         "unit": UnitOfLength.KILOMETERS,
         "divisor": 1000,
@@ -41,7 +39,7 @@ STAT_META = {
         "state_class": SensorStateClass.MEASUREMENT,
     },
     "SLEEP": {
-        "attr": "Sleep",
+        "field": "sleep_s",
         "icon": "mdi:sleep",
         "unit": UnitOfTime.MINUTES,
         "divisor": 60,
@@ -52,7 +50,7 @@ STAT_META = {
         "state_class": SensorStateClass.MEASUREMENT,
     },
     "NAP": {
-        "attr": "Nap",
+        "field": "nap_s",
         "icon": "mdi:power-sleep",
         "unit": UnitOfTime.MINUTES,
         "divisor": 60,
@@ -61,7 +59,7 @@ STAT_META = {
         "state_class": SensorStateClass.MEASUREMENT,
     },
     "GOAL": {
-        "attr": "Goal",
+        "field": "goal",
         "icon": "mdi:target",
         "unit": "steps",
         "divisor": 1,
@@ -71,196 +69,91 @@ STAT_META = {
     },
 }
 
+GENERIC_SENSORS = {
+    "Activity Type": "mdi:run",
+    "Current Place Name": "mdi:map-marker-radius",
+    "Current Place Address": "mdi:map-marker",
+    "Connected To": "mdi:human-greeting-proximity",
+}
+
 
 async def async_setup_entry(hass, config_entry, async_add_devices):
     """Add sensors for passed config_entry in HA."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
 
-    fitracking = coordinator.data
-
     new_devices = []
-    for pet in fitracking.pets:
-        if getattr(pet, "device", None) is None:
-            LOGGER.warning(
-                "Skipping pet %s: no collar paired", getattr(pet, "name", "unknown")
-            )
+    for pet in coordinator.data.pets:
+        if pet.device is None:
+            LOGGER.warning("Skipping pet %s: no collar paired", pet.name)
             continue
-        try:
-            new_devices.append(FiBatterySensor(hass, pet, coordinator))
-            for statType in SENSOR_STATS_BY_TYPE:
-                for statTime in SENSOR_STATS_BY_TIME:
-                    new_devices.append(
-                        PetStatsSensor(hass, pet, coordinator, statType, statTime)
-                    )
-            for generic in (
-                "Activity Type",
-                "Current Place Name",
-                "Current Place Address",
-                "Connected To",
-            ):
-                new_devices.append(PetGenericSensor(hass, pet, coordinator, generic))
-            for behavior in BEHAVIOR_META:
-                new_devices.append(
-                    PetBehaviorSensor(hass, pet, coordinator, behavior)
-                )
-        except Exception:
-            # One malformed pet must not block registration for the others.
-            LOGGER.exception(
-                "Skipping sensors for pet %s", getattr(pet, "petId", "unknown")
-            )
-        
+        new_devices.append(FiBatterySensor(coordinator, pet))
+        new_devices.append(PetLastNightSleepSensor(coordinator, pet))
+        new_devices.append(PetRestingSinceSensor(coordinator, pet))
+        for stat_type in SENSOR_STATS_BY_TYPE:
+            for stat_time in SENSOR_STATS_BY_TIME:
+                new_devices.append(PetStatsSensor(coordinator, pet, stat_type, stat_time))
+        for generic in GENERIC_SENSORS:
+            new_devices.append(PetGenericSensor(coordinator, pet, generic))
+        for behavior in BEHAVIOR_META:
+            new_devices.append(PetBehaviorSensor(coordinator, pet, behavior))
 
-    for base in fitracking.bases:
-        try:
-            new_devices.append(FiBaseSensor(hass, base, coordinator))
-        except Exception:
-            # One malformed base must not block registration for the others.
-            LOGGER.exception(
-                "Skipping base %s", getattr(base, "baseId", "unknown")
-            )
+    for base in coordinator.data.bases:
+        new_devices.append(FiBaseSensor(coordinator, base))
+
     if new_devices:
         async_add_devices(new_devices)
 
 
-class FiBaseSensor(CoordinatorEntity, SensorEntity):
-    def __init__(self, hass, base, coordinator):
-        self._hass = hass
-        self._baseId = base.baseId
-        self._online = base.online
-        self._base = base
-        super().__init__(coordinator)
+class FiBaseSensor(FiBaseEntity, SensorEntity):
+    """Online state of a Fi base."""
+
+    _attr_icon = "mdi:wifi"
 
     @property
     def name(self):
-        """Return the name of the sensor."""
         return f"{self.base.name} Base"
 
     @property
     def unique_id(self):
-        """Return the ID of this sensor."""
-        return f"{self.base.baseId}-base"
-
-    @property
-    def baseId(self):
-        return self._baseId
-
-    @property
-    def base(self):
-        return self.coordinator.data.getBase(self.baseId)
-
-    @property
-    def device_id(self):
-        return self.unique_id
-
-    @property
-    def device_class(self):
-        """Return the device class of the sensor."""
-        return None
+        return f"{self.base.base_id}-base"
 
     @property
     def native_value(self):
-        if self.base.online:
-            return "Online"
-        else:
-            return "Offline"
+        return "Online" if self.base.online else "Offline"
 
-    @property
-    def icon(self):
-        return "mdi:wifi"
 
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.base.baseId)},
-            "name": self.base.name,
-            "manufacturer": "Fi",
-            "model": "Fi Base",
-            # "sw_version": self.pet.device.buildId,
-        }
+class PetGenericSensor(FiPetEntity, SensorEntity):
+    """Textual state: activity, place and connection source."""
 
-class PetGenericSensor(CoordinatorEntity, SensorEntity):
-    """Representation of a Sensor."""
-
-    def __init__(self, hass, pet, coordinator, statType):
-        self._hass = hass
-        self._petId = pet.petId
-        self._statType = statType
-        super().__init__(coordinator)
-    
-    @property
-    def statType(self):
-        return self._statType
-
-    @property
-    def statTime(self):
-        return self._statTime
+    def __init__(self, coordinator, pet, stat_type):
+        super().__init__(coordinator, pet)
+        self._stat_type = stat_type
 
     @property
     def name(self):
-        """Return the name of the sensor."""
-        return f"{self.pet.name} {self.statType.title()}"
+        return f"{self.pet.name} {self._stat_type.title()}"
 
     @property
     def unique_id(self):
-        """Return the ID of this sensor."""
-        formattedType = self.statType.lower().replace(" ", "-")
-        return f"{self.pet.petId}-{formattedType}"
-
-    @property
-    def petId(self):
-        return self._petId
-
-    @property
-    def pet(self):
-        return self.coordinator.data.getPet(self.petId)
-
-    @property
-    def device(self):
-        return self.pet.device
-
-    @property
-    def device_id(self):
-        return self.unique_id
-
-    @property
-    def device_class(self):
-        """Return the device class of the sensor."""
-        return None
+        formatted = self._stat_type.lower().replace(" ", "-")
+        return f"{self.pet.pet_id}-{formatted}"
 
     @property
     def icon(self):
-        if self.statType == "Activity Type":
-            return "mdi:run"
-        elif self.statType == "Current Place Name":
-            return "mdi:map-marker-radius"
-        elif self.statType == "Current Place Address":
-            return "mdi:map-marker"
-        elif self.statType == "Connected To":
-            return "mdi:human-greeting-proximity"
+        return GENERIC_SENSORS[self._stat_type]
 
     @property
     def native_value(self):
-        if self.statType == "Activity Type":
-            return self.pet.getActivityType()
-        elif self.statType == "Current Place Name":
-            return self.pet.getCurrPlaceName()
-        elif self.statType == "Current Place Address":
-            return self.pet.getCurrPlaceAddress()
-        elif self.statType == "Connected To":
-            return self.pet.device.connectionStateType
-        return None
+        if self._stat_type == "Activity Type":
+            return self.pet.activity_type
+        if self._stat_type == "Current Place Name":
+            return self.pet.place_name
+        if self._stat_type == "Current Place Address":
+            return self.pet.place_address
+        return self.device.connection_state_type if self.device else None
 
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.pet.petId)},
-            "name": self.pet.name,
-            "manufacturer": "Fi",
-            "model": self.pet.breed,
-            "sw_version": self.pet.device.buildId,
-        }
 
-class PetBehaviorSensor(CoordinatorEntity, SensorEntity):
+class PetBehaviorSensor(FiPetEntity, SensorEntity):
     """Count of Fi-detected behaviour events today, with their times attached."""
 
     # Resets to 0 at local midnight like every other daily stat, and Fi revises
@@ -269,19 +162,13 @@ class PetBehaviorSensor(CoordinatorEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "events"
 
-    def __init__(self, hass, pet, coordinator, behavior):
-        self._hass = hass
-        self._petId = pet.petId
+    def __init__(self, coordinator, pet, behavior):
+        super().__init__(coordinator, pet)
         self._behavior = behavior
-        super().__init__(coordinator)
-
-    @property
-    def pet(self):
-        return self.coordinator.data.getPet(self._petId)
 
     @property
     def _events(self):
-        return self.coordinator.behavior.get(self._petId, {}).get(self._behavior, [])
+        return self.pet.behavior_events.get(self._behavior, [])
 
     @property
     def name(self):
@@ -289,7 +176,7 @@ class PetBehaviorSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def unique_id(self):
-        return f"{self._petId}-behavior-{self._behavior}"
+        return f"{self.pet.pet_id}-behavior-{self._behavior}"
 
     @property
     def icon(self):
@@ -307,73 +194,33 @@ class PetBehaviorSensor(CoordinatorEntity, SensorEntity):
             "last_event": events[-1].isoformat() if events else None,
         }
 
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.pet.petId)},
-            "name": self.pet.name,
-            "manufacturer": "Fi",
-            "model": self.pet.breed,
-            "sw_version": self.pet.device.buildId,
-        }
 
+class PetStatsSensor(FiPetEntity, SensorEntity):
+    """One activity or rest metric for one period."""
 
-class PetStatsSensor(CoordinatorEntity, SensorEntity):
-    """Representation of a Sensor."""
-
-    def __init__(self, hass, pet, coordinator, statType, statTime):
-        self._hass = hass
-        self._petId = pet.petId
-        self._statType = statType
-        self._statTime = statTime
-        super().__init__(coordinator)
-
-    @property
-    def statType(self):
-        return self._statType
-
-    @property
-    def statTime(self):
-        return self._statTime
-
-    @property
-    def name(self):
-        """Return the name of the sensor."""
-        return f"{self.pet.name} {self.statTime.title()} {self.statType.title()}"
-
-    @property
-    def unique_id(self):
-        """Return the ID of this sensor."""
-        return f"{self.pet.petId}-{self.statTime.lower()}-{self.statType.lower()}"
-
-    @property
-    def petId(self):
-        return self._petId
-
-    @property
-    def pet(self):
-        return self.coordinator.data.getPet(self.petId)
-
-    @property
-    def device(self):
-        return self.pet.device
-
-    @property
-    def device_id(self):
-        return self.unique_id
+    def __init__(self, coordinator, pet, stat_type, stat_time):
+        super().__init__(coordinator, pet)
+        self._stat_type = stat_type
+        self._stat_time = stat_time
 
     @property
     def _meta(self):
-        return STAT_META[self.statType.upper()]
+        return STAT_META[self._stat_type]
+
+    @property
+    def name(self):
+        return f"{self.pet.name} {self._stat_time.title()} {self._stat_type.title()}"
+
+    @property
+    def unique_id(self):
+        return f"{self.pet.pet_id}-{self._stat_time.lower()}-{self._stat_type.lower()}"
 
     @property
     def device_class(self):
-        """Return the device class of the sensor."""
         return self._meta["device_class"]
 
     @property
     def state_class(self):
-        """Counters reset each period; the goal is a target, not a counter."""
         return self._meta["state_class"]
 
     @property
@@ -385,104 +232,96 @@ class PetStatsSensor(CoordinatorEntity, SensorEntity):
         return self._meta["icon"]
 
     @property
-    def native_value(self):
-        meta = self._meta
-        raw = getattr(self.pet, f"{self.statTime.lower()}{meta['attr']}", None)
-        if raw is None:
-            return None
-        return raw if meta["divisor"] == 1 else round(raw / meta["divisor"], 2)
-
-    @property
     def native_unit_of_measurement(self):
-        """Return the unit_of_measurement of the device."""
         return self._meta["unit"]
 
     @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.pet.petId)},
-            "name": self.pet.name,
-            "manufacturer": "Fi",
-            "model": self.pet.breed,
-            "sw_version": self.pet.device.buildId,
-        }
+    def native_value(self):
+        stats = self.pet.stats.get(self._stat_time)
+        if stats is None:
+            return None
+        raw = getattr(stats, self._meta["field"])
+        if raw is None:
+            return None
+        divisor = self._meta["divisor"]
+        return raw if divisor == 1 else round(raw / divisor, 2)
 
 
-class FiBatterySensor(CoordinatorEntity, SensorEntity):
-    """Representation of a Sensor."""
+class PetLastNightSleepSensor(FiPetEntity, SensorEntity):
+    """Fi's settled overnight sleep total.
 
-    def __init__(self, hass, pet, coordinator):
-        self._hass = hass
-        self._petId = pet.petId
-        super().__init__(coordinator)
+    Fi attributes a rest session to the day it started and keeps topping that
+    bucket up while it runs, so the daily sleep sensor reads 0 whenever the
+    current session began yesterday. This is the figure the Fi app shows.
+    """
+
+    _attr_icon = "mdi:weather-night"
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
 
     @property
     def name(self):
-        """Return the name of the sensor."""
+        return f"{self.pet.name} Last Night Sleep"
+
+    @property
+    def unique_id(self):
+        return f"{self.pet.pet_id}-last-night-sleep"
+
+    @property
+    def native_value(self):
+        seconds = self.pet.last_night_sleep_s
+        return None if seconds is None else round(seconds / 60, 2)
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "sleep_start": self.pet.last_night_start.isoformat() if self.pet.last_night_start else None,
+            "sleep_end": self.pet.last_night_end.isoformat() if self.pet.last_night_end else None,
+        }
+
+
+class PetRestingSinceSensor(FiPetEntity, SensorEntity):
+    """When the in-progress rest session began, if the pet is resting now."""
+
+    _attr_icon = "mdi:bed-clock"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def name(self):
+        return f"{self.pet.name} Resting Since"
+
+    @property
+    def unique_id(self):
+        return f"{self.pet.pet_id}-resting-since"
+
+    @property
+    def native_value(self):
+        return self.pet.resting_since
+
+
+class FiBatterySensor(FiPetEntity, SensorEntity):
+    """Collar battery level."""
+
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def name(self):
         return f"{self.pet.name} Collar Battery Level"
 
     @property
     def unique_id(self):
-        """Return the ID of this sensor."""
-        return f"{self.pet.petId}-battery"
-
-    @property
-    def petId(self):
-        return self._petId
-
-    @property
-    def pet(self):
-        return self.coordinator.data.getPet(self.petId)
-
-    @property
-    def device(self):
-        return self.pet.device
-
-    @property
-    def device_id(self):
-        return self.unique_id
-
-    @property
-    def device_class(self):
-        """Return the device class of the sensor."""
-        return SensorDeviceClass.BATTERY
-
-    @property
-    def state_class(self):
-        """Return the state class of the sensor."""
-        return SensorStateClass.MEASUREMENT
-
-    @property
-    def native_unit_of_measurement(self):
-        """Return the unit_of_measurement of the device."""
-        return PERCENTAGE
-
-    @property
-    def isCharging(self):
-        return bool(self.pet.device.isCharging)
-
-    @property
-    def icon(self):
-        """Return the icon for the battery."""
-        return icon_for_battery_level(
-            battery_level=self.batteryPercent, charging=self.isCharging
-        )
-
-    @property
-    def batteryPercent(self):
-        """Return the state of the sensor."""
-        return self.pet.device.batteryPercent
+        return f"{self.pet.pet_id}-battery"
 
     @property
     def native_value(self):
-        return self.batteryPercent
+        return self.device.battery_percent if self.device else None
 
     @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.pet.petId)},
-            "name": self.pet.name,
-            "manufacturer": "Fi",
-            "model": self.pet.breed,
-            "sw_version": self.pet.device.buildId,
-        }
+    def icon(self):
+        if (device := self.device) is None or device.battery_percent is None:
+            return "mdi:battery-unknown"
+        return icon_for_battery_level(battery_level=device.battery_percent, charging=device.is_charging)

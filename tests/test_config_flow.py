@@ -1,7 +1,6 @@
 """Regression tests for the config and options flows."""
 
-from custom_components.fitracking import CannotConnect as BaseCannotConnect
-from custom_components.fitracking.config_flow import CannotConnect, OptionsFlowHandler
+from custom_components.fitracking.config_flow import ConfigFlow, OptionsFlowHandler
 
 
 def test_options_flow_does_not_override_init():
@@ -9,6 +8,10 @@ def test_options_flow_does_not_override_init():
     assert "__init__" not in vars(OptionsFlowHandler)
 
 
-def test_cannot_connect_is_not_shadowed():
-    """config_flow imported CannotConnect and then redefined it."""
-    assert CannotConnect is BaseCannotConnect
+def test_reauth_is_implemented():
+    """The coordinator raises ConfigEntryAuthFailed, which starts a reauth flow.
+
+    Without these steps Home Assistant would fail that flow with UnknownStep.
+    """
+    assert hasattr(ConfigFlow, "async_step_reauth")
+    assert hasattr(ConfigFlow, "async_step_reauth_confirm")

@@ -1,28 +1,117 @@
-"""Tests for the integration's setup helpers."""
+"""End-to-end setup of the config entry against a mocked Fi client."""
 
-import inspect
-import logging
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
-from pytryfi import fiPet
+import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.fitracking import (
-    _PYTRYFI_PLACE_MESSAGE,
-    _drop_place_warning,
+from custom_components.fitracking.api.models import Base, Device, FiData, LedColor, Pet, Stats
+from custom_components.fitracking.const import DOMAIN
+
+ENTRY_DATA = {"username": "me@example.com", "password": "secret", "polling": "10"}
+
+
+def _fi_data() -> FiData:
+    pet = Pet(
+        pet_id="p1",
+        name="Scottie",
+        breed="Corgi",
+        photo_url="https://example.invalid/scottie.jpg",
+        device=Device(
+            device_id="d1",
+            module_id="m1",
+            build_id="b1",
+            battery_percent=77,
+            is_charging=False,
+            led_enabled=False,
+            led_color_hex="#ff0000",
+            available_led_colors=(LedColor(code=8, hex_code="#ffffff"),),
+            connection_state_type="ConnectedToBase",
+            mode="NORMAL",
+        ),
+        activity_type="OngoingRest",
+        latitude=45.65,
+        longitude=25.6,
+        place_name="Home",
+        place_address="Somewhere",
+        resting_since=datetime(2026, 9, 19, 17, 15, tzinfo=UTC),
+        last_night_sleep_s=39823,
+        stats={
+            "DAILY": Stats(steps=435, goal=16000, distance_m=0.0, sleep_s=None, nap_s=None),
+            "WEEKLY": Stats(steps=26742, goal=112000, distance_m=2546.0, sleep_s=98805, nap_s=35943),
+            "MONTHLY": Stats(steps=26742, goal=480000, distance_m=2546.0, sleep_s=98805, nap_s=35943),
+        },
+        behavior_events={"barking": [datetime(2026, 9, 20, 1, 27, 28)]},
+    )
+    return FiData(pets=[pet], bases=[Base(base_id="b1", name="Kitchen", online=True)])
+
+
+@pytest.fixture
+def mock_client():
+    with patch("custom_components.fitracking.FiClient", autospec=True) as client_cls:
+        client = client_cls.return_value
+        client.async_login = AsyncMock(return_value="u1")
+        client.async_get_data = AsyncMock(return_value=_fi_data())
+        yield client
+
+
+async def _setup(hass) -> MockConfigEntry:
+    entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+async def test_entry_sets_up(hass, mock_client):
+    entry = await _setup(hass)
+    assert entry.state is entry.state.LOADED
+    assert mock_client.async_login.await_count == 1
+
+
+async def test_entry_unloads_cleanly(hass, mock_client):
+    entry = await _setup(hass)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert DOMAIN not in hass.data or entry.entry_id not in hass.data[DOMAIN]
+
+
+@pytest.mark.parametrize(
+    ("entity_id", "expected"),
+    [
+        ("sensor.scottie_collar_battery_level", "77"),
+        ("sensor.scottie_weekly_sleep", "1646.75"),  # 98805s -> minutes
+        ("sensor.scottie_last_night_sleep", "663.72"),
+        ("sensor.scottie_connected_to", "ConnectedToBase"),
+        ("sensor.scottie_current_place_name", "Home"),
+        ("sensor.kitchen_base", "Online"),
+        ("binary_sensor.scottie_collar_battery_charging", "off"),
+        ("select.scottie_lost_mode", "Safe"),
+    ],
 )
+async def test_entity_states(hass, mock_client, entity_id, expected):
+    await _setup(hass)
+    state = hass.states.get(entity_id)
+    assert state is not None, f"{entity_id} was never created"
+    assert state.state == expected
 
 
-def _record(message):
-    return logging.LogRecord("pytryfi.fiPet", logging.WARNING, __file__, 0, message, None, None)
+async def test_absent_rest_reads_unknown_not_zero(hass, mock_client):
+    """The whole point of the rewrite: no fabricated zeros."""
+    await _setup(hass)
+    assert hass.states.get("sensor.scottie_daily_sleep").state == "unknown"
 
 
-def test_filter_drops_the_place_warning():
-    assert _drop_place_warning(_record(_PYTRYFI_PLACE_MESSAGE)) is False
+async def test_tracker_reports_position(hass, mock_client):
+    await _setup(hass)
+    state = hass.states.get("device_tracker.scottie_tracker")
+    assert state.attributes["latitude"] == 45.65
+    assert state.attributes["longitude"] == 25.6
 
 
-def test_filter_keeps_every_other_message():
-    assert _drop_place_warning(_record("Could not update stats for Pet Scottie")) is True
-
-
-def test_pytryfi_still_emits_the_filtered_message():
-    """Guards the literal: if upstream fixes the log, the filter is dead code."""
-    assert _PYTRYFI_PLACE_MESSAGE in inspect.getsource(fiPet)
+async def test_behavior_sensor_counts_events(hass, mock_client):
+    await _setup(hass)
+    state = hass.states.get("sensor.scottie_barking")
+    assert state.state == "1"
+    assert state.attributes["last_event"] == "2026-09-20T01:27:28"

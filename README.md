@@ -4,7 +4,7 @@
 
 A custom [Home Assistant](https://www.home-assistant.io/) integration for [Fi](https://fitracking.com/) smart GPS dog collars — live location, activity and rest tracking, collar light control and Lost Dog mode.
 
-> Personal fork of [sbabcock23/hass-tryfi](https://github.com/sbabcock23/hass-tryfi), renamed to follow Fi's rebrand from `tryfi.com` to `fitracking.com`. See [Differences from upstream](#differences-from-upstream).
+> Personal fork of [sbabcock23/hass-tryfi](https://github.com/sbabcock23/hass-tryfi), renamed to follow Fi's rebrand from `tryfi.com` to `fitracking.com`. It no longer depends on `pytryfi` — the API client is built in. See [Differences from upstream](#differences-from-upstream).
 
 ## Features
 
@@ -30,6 +30,23 @@ Assistant's 10% reset tolerance is relative — so a 30 m correction to a 50 m
 morning walk reads as a counter reset and adds a phantom cycle to the sum.
 
 Plus, per pet: collar battery level (`%`, `battery`), activity type, current place name, current place address, and the current connection source. Each Fi Base reports `Online` / `Offline`.
+
+A metric Fi has not reported reads `unknown`, never `0`.
+
+### Sleep: read `Last Night Sleep`, not `Daily Sleep`
+
+Fi attributes a rest session to the day it **started**, and keeps adding to that
+day's bucket for as long as the session runs. A dog that lies down at 20:15 and
+sleeps through until morning has all of that sleep credited to *yesterday* — so
+`Daily Sleep` legitimately reads `0` for most of the morning and only starts
+moving once a new rest session begins today.
+
+Two extra sensors exist because of this:
+
+| Sensor | Meaning |
+|---|---|
+| `Last Night Sleep` | Fi's settled overnight total, the figure the Fi app shows. `unknown` until the night is finalised, with `sleep_start` / `sleep_end` attributes. |
+| `Resting Since` | Timestamp the in-progress rest session began, or `unknown` when the pet is active. |
 
 Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `max`:
 
@@ -63,8 +80,8 @@ last_event: "2026-09-19T01:29:52+03:00"
 ```
 
 The counts reset at local midnight and use `measurement` for the same reason as
-the activity statistics above. `pytryfi` does not implement this data; it is
-fetched directly from Fi's `getPetHealthTrendsForPet` query.
+the activity statistics above. They are fetched directly from Fi's
+`getPetHealthTrendsForPet` query.
 
 ### Binary sensor
 
@@ -316,7 +333,14 @@ A collar sitting on `ConnectedToCellular` while at home usually means the Base i
 | Change | Why |
 |---|---|
 | Domain renamed `tryfi` → `fitracking` | Matches Fi's rebrand to fitracking.com |
-| Goal sensors added | Upstream left `# FUTURE COULD INCLUDE STEP GOAL`; `pytryfi` already exposed the values |
+| **`pytryfi` dependency removed** | The library called `sentry_sdk.init()` with a hardcoded third-party DSN inside `PyTryFi.__init__`, which configures the **global** Sentry client for the whole Home Assistant process ([pytryfi#32](https://github.com/sbabcock23/pytryfi/issues/32), [hass-tryfi#115](https://github.com/sbabcock23/hass-tryfi/issues/115)). PyPI is also frozen at 0.0.21, so upstream fixes were unreachable ([pytryfi#43](https://github.com/sbabcock23/pytryfi/issues/43)) |
+| Async-native client | Every call went through `async_add_executor_job`; LED and Lost Mode writes ran blocking HTTP on the event loop |
+| Absent data reads `unknown` | `setRestStats` zeroed sleep and nap *before* parsing and swallowed failures, so "Fi sent nothing" was indistinguishable from "the dog slept nothing" ([hass-tryfi#89](https://github.com/sbabcock23/hass-tryfi/issues/89)) |
+| Session re-authentication | Nothing ever logged back in once Fi expired the session, which needed a manual reload ([hass-tryfi#91](https://github.com/sbabcock23/hass-tryfi/issues/91)) |
+| Reauth flow | Bad credentials now prompt for a new password instead of failing setup |
+| Account email no longer polled | The device fragment pulled `UserDetails` — email, phone — into every refresh |
+| `Last Night Sleep` and `Resting Since` | Fi buckets rest by session-start day, so `Daily Sleep` alone cannot show last night |
+| Goal sensors added | Upstream left `# FUTURE COULD INCLUDE STEP GOAL`; the values were already available |
 | Migrated to `SensorEntity` | Entities inherited plain `Entity`, so no `state_class` was possible and no long-term statistics were recorded |
 | Per-metric icons | Every statistic returned `mdi:map-marker-distance`, sleep included |
 | Device classes and display precision | Distance, duration and battery now render natively |

@@ -1,32 +1,18 @@
 """Tests for the Fi Tracking sensor platform."""
 
+from dataclasses import fields
+
 import pytest
 from homeassistant.components.sensor import SensorStateClass
 
+from custom_components.fitracking.api.models import PERIODS, Stats
 from custom_components.fitracking.const import (
     SENSOR_STATS_BY_TIME,
     SENSOR_STATS_BY_TYPE,
 )
 from custom_components.fitracking.sensor import STAT_META, PetBehaviorSensor
 
-# Stat attribute names pytryfi exposes on a pet object.
-PYTRYFI_STAT_ATTRS = {
-    "dailySteps",
-    "weeklySteps",
-    "monthlySteps",
-    "dailyTotalDistance",
-    "weeklyTotalDistance",
-    "monthlyTotalDistance",
-    "dailySleep",
-    "weeklySleep",
-    "monthlySleep",
-    "dailyNap",
-    "weeklyNap",
-    "monthlyNap",
-    "dailyGoal",
-    "weeklyGoal",
-    "monthlyGoal",
-}
+STATS_FIELDS = {field.name for field in fields(Stats)}
 
 
 def test_every_stat_type_has_metadata():
@@ -39,20 +25,18 @@ def test_goal_is_exposed():
 
 
 @pytest.mark.parametrize("stat_type", SENSOR_STATS_BY_TYPE)
-@pytest.mark.parametrize("stat_time", SENSOR_STATS_BY_TIME)
-def test_attribute_name_resolves(stat_type, stat_time):
-    """Every stat/period pair must address a real pytryfi attribute."""
-    attr = f"{stat_time.lower()}{STAT_META[stat_type]['attr']}"
-    assert attr in PYTRYFI_STAT_ATTRS
+def test_metadata_field_exists_on_stats(stat_type):
+    """Every stat must address a real attribute of the Stats model."""
+    assert STAT_META[stat_type]["field"] in STATS_FIELDS
 
 
-def test_all_pytryfi_stats_are_covered():
-    built = {
-        f"{stat_time.lower()}{STAT_META[stat_type]['attr']}"
-        for stat_type in SENSOR_STATS_BY_TYPE
-        for stat_time in SENSOR_STATS_BY_TIME
-    }
-    assert built == PYTRYFI_STAT_ATTRS
+def test_all_stats_fields_are_covered():
+    assert {meta["field"] for meta in STAT_META.values()} == STATS_FIELDS
+
+
+def test_periods_match_the_model():
+    """The sensor's period names key directly into Pet.stats."""
+    assert set(SENSOR_STATS_BY_TIME) == set(PERIODS)
 
 
 @pytest.mark.parametrize(

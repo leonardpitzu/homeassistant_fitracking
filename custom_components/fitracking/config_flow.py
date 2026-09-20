@@ -1,12 +1,16 @@
+"""Config and options flows for Fi Tracking."""
+
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries, core, exceptions
 from homeassistant.core import callback
-from pytryfi import PyTryFi
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
-from . import CannotConnect, async_connect_or_timeout
-from .const import (  # pylint:disable=unused-import
+from .api import FiAuthError, FiClient, FiConnectionError
+from .const import (
     CONF_PASSWORD,
     CONF_POLLING_RATE,
     CONF_USERNAME,
@@ -16,17 +20,6 @@ from .const import (  # pylint:disable=unused-import
 
 _LOGGER = logging.getLogger(__name__)
 
-# This is the schema that used to display the UI to the user. This simple
-# schema has a single required host field, but it could include a number of fields
-# such as username, password etc. See other components in the HA core code for
-# further examples.
-# Note the input displayed to the user will be translated. See the
-# translations/<lang>.json file and strings.json. See here for further information:
-# https://developers.home-assistant.io/docs/config_entries_config_flow_handler/#translations
-# At the time of writing I found the translations created by the scaffold didn't
-# quite work as documented and always gave me the "Lokalise key references" string
-# (in square brackets), rather than the actual translated value. I did not attempt to
-# figure this out or look further into it.
 DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): str,
@@ -35,35 +28,30 @@ DATA_SCHEMA = vol.Schema(
     }
 )
 
+REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_PASSWORD): str})
 
-async def validate_input(hass: core.HomeAssistant, data: dict):
+
+async def _async_check_credentials(hass: core.HomeAssistant, username: str, password: str) -> None:
+    client = FiClient(async_create_clientsession(hass), username, password)
+    await client.async_login()
+
+
+async def validate_input(hass: core.HomeAssistant, data: dict) -> dict[str, str]:
+    """Check the polling rate and prove the credentials work."""
     try:
         if int(data[CONF_POLLING_RATE]) < 1:
             raise InvalidPolling
     except (TypeError, ValueError) as err:
         raise InvalidPolling from err
 
-    try:
-        fitracking = await hass.async_add_executor_job(
-            PyTryFi, data[CONF_USERNAME], data[CONF_PASSWORD]
-        )
-    except Exception as err:
-        raise CannotConnect from err
-
-    await async_connect_or_timeout(hass, fitracking)
-
+    await _async_check_credentials(hass, data[CONF_USERNAME], data[CONF_PASSWORD])
     return {"title": data[CONF_USERNAME]}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Hello World."""
+    """Handle a config flow for Fi Tracking."""
 
     VERSION = 1
-    # Pick one of the available connection classes in homeassistant/config_entries.py
-    # This tells HA if it should be asking for updates, or it'll be notified of updates
-    # automatically. This example uses PUSH, as the dummy hub will notify HA of
-    # changes.
-    CONNECTION_CLASS = config_entries.CONN_CLASS_LOCAL_POLL
 
     @staticmethod
     @callback
@@ -73,30 +61,50 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
-        # This goes through the steps to take the user through the setup process.
-        # Using this it is possible to update the UI and prompt for additional
-        # information. This example provides a single form (built from `DATA_SCHEMA`),
-        # and when that has some validated input, it calls `async_create_entry` to
-        # actually create the HA config entry. Note the "title" value is returned by
-        # `validate_input` above.
         errors = {}
         if user_input is not None:
             try:
                 info = await validate_input(self.hass, user_input)
-
-                return self.async_create_entry(title=info["title"], data=user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
             except InvalidPolling:
                 errors["base"] = "invalid_polling"
+            except FiAuthError:
+                errors["base"] = "invalid_auth"
+            except FiConnectionError:
+                errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
+            else:
+                await self.async_set_unique_id(user_input[CONF_USERNAME].lower())
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(title=info["title"], data=user_input)
 
-        # If there is no user input or there were errors, show the form again, including any errors that were found with the input.
-        return self.async_show_form(
-            step_id="user", data_schema=DATA_SCHEMA, errors=errors
-        )
+        return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA, errors=errors)
+
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]):
+        """Fi rejected the stored credentials; ask for the password again."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        """Collect a fresh password and revalidate it."""
+        errors = {}
+        entry = self._get_reauth_entry()
+        if user_input is not None:
+            try:
+                await _async_check_credentials(self.hass, entry.data[CONF_USERNAME], user_input[CONF_PASSWORD])
+            except FiAuthError:
+                errors["base"] = "invalid_auth"
+            except FiConnectionError:
+                errors["base"] = "cannot_connect"
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected exception")
+                errors["base"] = "unknown"
+            else:
+                return self.async_update_reload_and_abort(
+                    entry, data_updates={CONF_PASSWORD: user_input[CONF_PASSWORD]}
+                )
+
+        return self.async_show_form(step_id="reauth_confirm", data_schema=REAUTH_SCHEMA, errors=errors)
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):

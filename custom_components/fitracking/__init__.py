@@ -1,20 +1,21 @@
+"""The Fi Tracking integration."""
+
 import logging
 from datetime import timedelta
 
-from homeassistant import exceptions
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.update_coordinator import (
-    DataUpdateCoordinator,
-    UpdateFailed,
-)
-from pytryfi import PyTryFi
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
-from .behavior import fetch_behavior_events
+from .api import FiAuthError, FiClient, FiConnectionError, FiData
 from .const import (
+    CONF_PASSWORD,
     CONF_POLLING_RATE,
+    CONF_USERNAME,
     DEFAULT_POLLING_RATE,
     DOMAIN,
     PLATFORMS,
@@ -22,40 +23,28 @@ from .const import (
 
 LOGGER = logging.getLogger(__name__)
 
-# pytryfi 0.0.21 logs this at WARNING every time the pet is not inside one of
-# Fi's saved places, which is most polls. Fixed upstream but unreleased.
-_PYTRYFI_PLACE_LOGGER = "pytryfi.fiPet"
-_PYTRYFI_PLACE_MESSAGE = "Could not set place, defaulting to Unknown"
-
-
-def _drop_place_warning(record: logging.LogRecord) -> bool:
-    return record.getMessage() != _PYTRYFI_PLACE_MESSAGE
-
-
 # Setup is config-entry only; async_setup_entry seeds hass.data itself.
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    pytryfi_logger = logging.getLogger(_PYTRYFI_PLACE_LOGGER)
-    pytryfi_logger.addFilter(_drop_place_warning)
-    entry.async_on_unload(lambda: pytryfi_logger.removeFilter(_drop_place_warning))
+    # Fi authenticates with a cookie, so this entry gets its own jar rather
+    # than sharing Home Assistant's pooled session.
+    session = async_create_clientsession(hass)
+    client = FiClient(session, entry.data[CONF_USERNAME], entry.data[CONF_PASSWORD])
 
-    fitracking = await hass.async_add_executor_job(PyTryFi,entry.data["username"], entry.data["password"])
-
-    # Exceptions are swallowed in the PyTryFi library, so we must assert a
-    # sucessful login before continuing with setup. When not successful,
-    # hass will continue to retry setup
-    if not hasattr(fitracking, 'currentUser'):
-        raise ConfigEntryNotReady
+    try:
+        await client.async_login()
+    except FiAuthError as err:
+        raise ConfigEntryAuthFailed(str(err)) from err
+    except FiConnectionError as err:
+        raise ConfigEntryNotReady(str(err)) from err
 
     # Options take precedence over the value captured at setup, so the options
     # flow actually takes effect (upstream only ever read entry.data).
-    polling_rate = entry.options.get(
-        CONF_POLLING_RATE, entry.data.get(CONF_POLLING_RATE, DEFAULT_POLLING_RATE)
-    )
+    polling_rate = entry.options.get(CONF_POLLING_RATE, entry.data.get(CONF_POLLING_RATE, DEFAULT_POLLING_RATE))
 
-    coordinator = FiDataUpdateCoordinator(hass, fitracking, int(polling_rate))
+    coordinator = FiDataUpdateCoordinator(hass, client, int(polling_rate))
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})
@@ -63,8 +52,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
-    # This creates each HA object for each platform your device requires.
-    # It's done by calling the `async_setup_entry` function in each platform module.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
@@ -75,7 +62,7 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
@@ -84,68 +71,22 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     return unload_ok
 
 
-async def async_connect_or_timeout(hass, fitracking):
-    userId = None
-    try:
-        userId = fitracking._userId
-        if userId is not None:
-            LOGGER.info("Success Connecting to Fi")
-    except Exception as err:
-        LOGGER.error("Error connecting to Fi")
-        raise CannotConnect from err
+class FiDataUpdateCoordinator(DataUpdateCoordinator[FiData]):
+    """Refreshes every pet and base on the configured interval."""
 
-
-class CannotConnect(exceptions.HomeAssistantError):
-    """Error to indicate we cannot connect."""
-
-
-class FiDataUpdateCoordinator(DataUpdateCoordinator):
-    """Class to manage the refresh of the fitracking data api"""
-
-    def __init__(self, hass, fitracking, pollingRate):
-        self._fitracking = fitracking
-        self._hass = hass
-        self._pollingRate = int(pollingRate)
-        self._behavior = {}
+    def __init__(self, hass: HomeAssistant, client: FiClient, polling_rate: int) -> None:
+        self.client = client
         super().__init__(
             hass,
             LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=pollingRate),
+            update_interval=timedelta(seconds=polling_rate),
         )
 
-    @property
-    def fitracking(self):
-        return self._fitracking
-
-    @property
-    def behavior(self):
-        """{petId: {behaviour key: [event datetimes]}} for today."""
-        return self._behavior
-
-    @property
-    def pollingRate(self):
-        return self._pollingRate
-
-    def _fetch_behavior(self):
-        """Behaviour trends are a separate query; keep last good on failure."""
-        events = {}
-        for pet in self.fitracking.pets:
-            try:
-                events[pet.petId] = fetch_behavior_events(
-                    self.fitracking.session, pet.petId
-                )
-            except Exception:
-                LOGGER.exception("Behaviour trends unavailable for pet %s", pet.petId)
-                events[pet.petId] = self._behavior.get(pet.petId, {})
-        return events
-
-    async def _async_update_data(self):
-        """Update data via library."""
+    async def _async_update_data(self) -> FiData:
         try:
-            await self._hass.async_add_executor_job(self.fitracking.update)
-        except Exception as error:
-            LOGGER.error("Error updating Fi data\n{error}")
-            raise UpdateFailed(error) from error
-        self._behavior = await self._hass.async_add_executor_job(self._fetch_behavior)
-        return self.fitracking
+            return await self.client.async_get_data(dt_util.start_of_local_day())
+        except FiAuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except FiConnectionError as err:
+            raise UpdateFailed(str(err)) from err
