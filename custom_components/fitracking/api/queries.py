@@ -83,6 +83,11 @@ query {
 # Everything per-pet in a single round trip. GraphQL reports per-field errors
 # alongside partial data, so one failing section cannot blank the others.
 #
+# Rest comes from restFeed, not restSummaryFeed: restSummaryFeed files a whole
+# session under the local day it BEGAN, so its daily bucket reads SLEEP 0 for as
+# long as the current night started yesterday. restFeed's totals are clipped at
+# the period boundary, which is what the Fi app shows for the day, week and month.
+#
 # Fi keys a night by the evening it BEGAN and answers Unavailable until that
 # night ends, so last night lives under yesterday's date from the moment it
 # settles -- and under the day before that between local midnight and the
@@ -106,9 +111,9 @@ query PetDetail($petId: ID!, $lastNight: DateTime!, $priorNight: DateTime!) {
     dailyActivity: currentActivitySummary(period: DAILY) { ...ActivitySummaryDetails }
     weeklyActivity: currentActivitySummary(period: WEEKLY) { ...ActivitySummaryDetails }
     monthlyActivity: currentActivitySummary(period: MONTHLY) { ...ActivitySummaryDetails }
-    dailyRest: restSummaryFeed(cursor: null, period: DAILY, limit: 1) { ...RestFeedDetails }
-    weeklyRest: restSummaryFeed(cursor: null, period: WEEKLY, limit: 1) { ...RestFeedDetails }
-    monthlyRest: restSummaryFeed(cursor: null, period: MONTHLY, limit: 1) { ...RestFeedDetails }
+    dailyRest: restFeed(cursor: null, period: DAY) { ...RestFeedDetails }
+    weeklyRest: restFeed(cursor: null, period: WEEK) { ...RestFeedDetails }
+    monthlyRest: restFeed(cursor: null, period: MONTH) { ...RestFeedDetails }
     lastNight: overnightRestSummary(date: $lastNight) { ...OvernightDetails }
     priorNight: overnightRestSummary(date: $priorNight) { ...OvernightDetails }
   }
@@ -142,15 +147,10 @@ fragment ActivitySummaryDetails on ActivitySummary {
   totalDistance
 }
 
-fragment RestFeedDetails on RestSummaryFeed {
-  restSummaries {
-    start
-    end
-    data {
-      ... on ConcreteRestSummaryData {
-        sleepAmounts { type duration }
-      }
-    }
+fragment RestFeedDetails on RestFeed {
+  restSummary {
+    sleepSecondsTotal
+    napSecondsTotal
   }
 }
 """

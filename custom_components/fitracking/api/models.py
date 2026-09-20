@@ -133,15 +133,16 @@ def _parse_activity(raw: dict | None) -> tuple[int | None, int | None, float | N
 
 
 def _parse_rest(raw: dict | None) -> tuple[int | None, int | None]:
-    """Return (sleep, nap) seconds, or (None, None) when Fi reported no summary."""
-    summaries = (raw or {}).get("restSummaries") or []
-    if not summaries:
+    """Return (sleep, nap) seconds for the period, or (None, None) when absent.
+
+    restFeed clips a session at the period boundary, so a night that began
+    yesterday contributes only the part that fell inside today -- the split the
+    Fi app shows. A zero here is therefore a real zero, not a bucketing artefact.
+    """
+    summary = (raw or {}).get("restSummary")
+    if not summary:
         return None, None
-    amounts = (summaries[0].get("data") or {}).get("sleepAmounts")
-    if not amounts:
-        return None, None
-    by_type = {item.get("type"): _as_int(item.get("duration")) for item in amounts}
-    return by_type.get("SLEEP"), by_type.get("NAP")
+    return _as_int(summary.get("sleepSecondsTotal")), _as_int(summary.get("napSecondsTotal"))
 
 
 @dataclass(frozen=True, slots=True)

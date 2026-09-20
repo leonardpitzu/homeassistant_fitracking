@@ -70,6 +70,13 @@ def test_pet_detail_asks_for_two_nights():
     assert "priorNight: overnightRestSummary(date: $priorNight)" in queries.PET_DETAIL
 
 
+def test_rest_totals_are_clipped_to_the_period():
+    """restSummaryFeed buckets a session by the day it began and never splits it."""
+    assert "restSummaryFeed" not in queries.PET_DETAIL
+    for alias, period in (("dailyRest", "DAY"), ("weeklyRest", "WEEK"), ("monthlyRest", "MONTH")):
+        assert f"{alias}: restFeed(cursor: null, period: {period})" in queries.PET_DETAIL
+
+
 def test_place_is_scoped_to_ongoing_rest():
     """`place` is defined on OngoingRest, not the OngoingActivity interface."""
     rest_block = queries.PET_DETAIL.split("... on OngoingRest")[1]

@@ -248,11 +248,10 @@ class PetStatsSensor(FiPetEntity, SensorEntity):
 
 
 class PetLastNightSleepSensor(FiPetEntity, SensorEntity):
-    """Fi's settled overnight sleep total.
+    """Fi's settled overnight sleep total, as one uninterrupted night.
 
-    Fi attributes a rest session to the day it started and keeps topping that
-    bucket up while it runs, so the daily sleep sensor reads 0 whenever the
-    current session began yesterday. This is the figure the Fi app shows.
+    `Daily Sleep` counts only the portion of a night that fell inside today, so
+    a night spanning midnight is split across two days. This reports it whole.
     """
 
     _attr_icon = "mdi:weather-night"

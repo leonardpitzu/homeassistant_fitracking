@@ -21,13 +21,8 @@ MIDNIGHT = datetime(2026, 9, 19)
 
 def _rest(sleep=None, nap=None, *, empty=False):
     if empty:
-        return {"restSummaries": []}
-    amounts = []
-    if sleep is not None:
-        amounts.append({"type": "SLEEP", "duration": sleep})
-    if nap is not None:
-        amounts.append({"type": "NAP", "duration": nap})
-    return {"restSummaries": [{"start": "x", "end": "y", "data": {"sleepAmounts": amounts}}]}
+        return {"restSummary": None}
+    return {"restSummary": {"sleepSecondsTotal": sleep, "napSecondsTotal": nap}}
 
 
 def _detail(**overrides):
@@ -64,6 +59,17 @@ def test_missing_rest_summary_is_none_not_zero():
     pet = _pet(_detail(dailyRest=_rest(empty=True)))
     assert pet.stats["DAILY"].sleep_s is None
     assert pet.stats["DAILY"].nap_s is None
+
+
+def test_the_old_session_bucketed_shape_is_not_read():
+    """restSummaryFeed files a whole night under the day it began; restFeed clips it.
+
+    Reverting the query without the parser would silently restore the bug, so a
+    payload in the old shape must read as absent rather than as data.
+    """
+    legacy = {"restSummaries": [{"data": {"sleepAmounts": [{"type": "SLEEP", "duration": 40306}]}}]}
+    pet = _pet(_detail(dailyRest=legacy))
+    assert pet.stats["DAILY"].sleep_s is None
 
 
 def test_a_real_zero_survives_as_zero():

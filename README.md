@@ -33,19 +33,25 @@ Plus, per pet: collar battery level (`%`, `battery`), activity type, current pla
 
 A metric Fi has not reported reads `unknown`, never `0`.
 
-### Sleep: read `Last Night Sleep`, not `Daily Sleep`
+### Rest periods follow the calendar, like the Fi app
 
-Fi attributes a rest session to the day it **started**, and keeps adding to that
-day's bucket for as long as the session runs. A dog that lies down at 20:15 and
-sleeps through until morning has all of that sleep credited to *yesterday* — so
-`Daily Sleep` legitimately reads `0` for most of the morning and only starts
-moving once a new rest session begins today.
+Fi exposes rest twice. `restSummaryFeed` files a whole session under the local
+day it **began** and never splits it, so its daily bucket reports `0` sleep for
+as long as the current night started yesterday. The Fi app does not show that
+number, and neither does this integration: `Sleep` and `Nap` read `restFeed`,
+whose totals are clipped at the period boundary. A night running 21:19 → 08:34
+contributes its portion before midnight to yesterday and the 8h 30m after it to
+today — for `daily`, `weekly` and `monthly` alike. `Steps`, `Distance` and
+`Goal` were already calendar-aligned.
 
-Two extra sensors exist because of this:
+So a `0` is a real `0`, and every period answers the same question the app does:
+what did the dog do *in this day, this week, this month*.
+
+Two sensors cover what a calendar period cannot say on its own:
 
 | Sensor | Meaning |
 |---|---|
-| `Last Night Sleep` | Fi's settled overnight total, the figure the Fi app shows. Keyed by the evening the night began, so the integration asks Fi for both candidate evenings and reports the most recent one that has finished. `unknown` only when neither has, with `sleep_start` / `sleep_end` attributes. |
+| `Last Night Sleep` | The night as one unbroken session, uncut by midnight — Fi's settled overnight total. Keyed by the evening the night began, so the integration asks Fi for both candidate evenings and reports the most recent one that has finished. `unknown` only when neither has, with `sleep_start` / `sleep_end` attributes. |
 | `Resting Since` | Timestamp Fi's current `OngoingRest` began, or `unknown` while the pet is on a walk. Fi means "settled at a place" here, not "asleep", so this keeps running after the dog wakes up. |
 
 Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `max`:
@@ -339,7 +345,8 @@ A collar sitting on `ConnectedToCellular` while at home usually means the Base i
 | Session re-authentication | Nothing ever logged back in once Fi expired the session, which needed a manual reload ([hass-tryfi#91](https://github.com/sbabcock23/hass-tryfi/issues/91)) |
 | Reauth flow | Bad credentials now prompt for a new password instead of failing setup |
 | Account email no longer polled | The device fragment pulled `UserDetails` — email, phone — into every refresh |
-| `Last Night Sleep` and `Resting Since` | Fi buckets rest by session-start day, so `Daily Sleep` alone cannot show last night |
+| Rest clipped to the calendar period | Upstream read `restSummaryFeed`, which files a night under the day it began, so `Daily Sleep` showed `0` all morning while the app showed the night's hours |
+| `Last Night Sleep` and `Resting Since` | A calendar day splits a night in two; neither sensor exists upstream |
 | Goal sensors added | Upstream left `# FUTURE COULD INCLUDE STEP GOAL`; the values were already available |
 | Migrated to `SensorEntity` | Entities inherited plain `Entity`, so no `state_class` was possible and no long-term statistics were recorded |
 | Per-metric icons | Every statistic returned `mdi:map-marker-distance`, sleep included |
