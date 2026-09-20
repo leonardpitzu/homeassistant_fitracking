@@ -67,7 +67,7 @@ day carries exactly one phase**, so the six always add up to 1440.
 | `night_sleep` | Rest belonging to a night rather than to the day — last night's tail after midnight, and the next night once the dog settles into it |
 | `day_sleep` | Any other rest |
 | `active` | Fi judged the dog active — walks and everything else |
-| `awake` | Reporting, but neither resting nor active |
+| `idle` | Reporting, but neither resting nor active. Usually empty: Fi pads every activity event to ~12 minutes, which swallows the short gaps between rests |
 | `offline` | Collar off or charging; nothing is knowable here |
 | `no_data` | The part of the day Fi has not reported on yet |
 
@@ -77,7 +77,7 @@ already ordered and gapless, so a card needs no arithmetic of its own:
 ```yaml
 day_minutes: 1440
 reported_minutes: 1390
-totals: {night_sleep: 715, day_sleep: 537, active: 79, awake: 0, offline: 59, no_data: 50}
+totals: {night_sleep: 715, day_sleep: 537, active: 79, idle: 0, offline: 59, no_data: 50}
 segments:
   - {phase: night_sleep, start: 0, minutes: 56}
   - {phase: active, start: 56, minutes: 3}
@@ -270,14 +270,14 @@ series:
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
       a=b+s.start*6e4,z=a+s.minutes*6e4;o.push([a,1],[z,1],[z+1,null]);});return o;
   - entity: sensor.rex_day_phase
-    name: Awake
+    name: Idle
     color: "#7A8290"
     stroke_width: 26
     show:
       legend_value: false
       in_header: false
     data_generator: >-
-      const P='awake';const d=new Date();d.setHours(0,0,0,0);const
+      const P='idle';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
       a=b+s.start*6e4,z=a+s.minutes*6e4;o.push([a,1],[z,1],[z+1,null]);});return o;
   - entity: sensor.rex_day_phase

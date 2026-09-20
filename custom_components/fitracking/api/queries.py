@@ -26,7 +26,6 @@ fragment DeviceDetails on Device {
   id
   moduleId
   info
-  hasActiveSubscription
   operationParams {
     mode
     ledEnabled
@@ -34,7 +33,6 @@ fragment DeviceDetails on Device {
   }
   lastConnectionState {
     __typename
-    date
   }
   ledColor { ...LedColorDetails }
   availableLedColors { ...LedColorDetails }
@@ -62,7 +60,6 @@ HOUSEHOLDS = (
     """
 query {
   currentUser {
-    id
     userHouseholds {
       household {
         pets { ...PetProfile }
@@ -98,8 +95,6 @@ query PetDetail($petId: ID!, $lastNight: DateTime!, $priorNight: DateTime!) {
     ongoingActivity {
       __typename
       start
-      areaName
-      lastReportTimestamp
       ... on OngoingWalk {
         positions { position { latitude longitude } }
       }
@@ -143,7 +138,6 @@ query PetDetail($petId: ID!, $lastNight: DateTime!, $priorNight: DateTime!) {
 # from overnightRestSummary rather than from a second timeline.
 fragment DayTimelineDetails on PetBehaviorDetail {
   ... on PetBehaviorDetailDay {
-    behaviorId
     segmentedTimeline {
       intervals { intervalType offset length }
     }
@@ -153,7 +147,6 @@ fragment DayTimelineDetails on PetBehaviorDetail {
 fragment OvernightDetails on OvernightRestSummary {
   __typename
   ... on ConcreteOvernightRestSummary {
-    date
     sleepStart
     sleepEnd
     sleepSeconds
@@ -161,8 +154,6 @@ fragment OvernightDetails on OvernightRestSummary {
 }
 
 fragment ActivitySummaryDetails on ActivitySummary {
-  start
-  end
   totalSteps
   stepGoal
   totalDistance

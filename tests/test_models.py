@@ -240,7 +240,7 @@ class TestDayPhases:
         )
         assert sum(item.minutes for item in pet.day_segments) == DAY_MINUTES
 
-    def test_minutes_fi_has_not_reported_are_not_called_awake(self):
+    def test_minutes_fi_has_not_reported_are_not_called_idle(self):
         """Anything past the collar's last report is unknown, not idle time."""
         pet = self._pet_with(rest=_timeline(_interval("EVENT", 0, 600)))
         tail = pet.day_segments[-1]

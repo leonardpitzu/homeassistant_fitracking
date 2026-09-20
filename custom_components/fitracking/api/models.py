@@ -23,14 +23,14 @@ DAY_MINUTES = 24 * 60
 PHASE_NIGHT_SLEEP = "night_sleep"
 PHASE_DAY_SLEEP = "day_sleep"
 PHASE_ACTIVE = "active"
-PHASE_AWAKE = "awake"
+PHASE_IDLE = "idle"
 PHASE_OFFLINE = "offline"
 PHASE_NO_DATA = "no_data"
 PHASES = (
     PHASE_NIGHT_SLEEP,
     PHASE_DAY_SLEEP,
     PHASE_ACTIVE,
-    PHASE_AWAKE,
+    PHASE_IDLE,
     PHASE_OFFLINE,
     PHASE_NO_DATA,
 )
@@ -105,7 +105,6 @@ class Device:
     available_led_colors: tuple[LedColor, ...] = ()
     connection_state_type: str | None = None
     mode: str | None = None
-    has_active_subscription: bool | None = None
 
     @property
     def is_lost(self) -> bool:
@@ -141,7 +140,6 @@ class Device:
             available_led_colors=colors,
             connection_state_type=(raw.get("lastConnectionState") or {}).get("__typename"),
             mode=ops.get("mode"),
-            has_active_subscription=raw.get("hasActiveSubscription"),
         )
 
 
@@ -274,7 +272,7 @@ def build_day_phases(
     reported = max((end for _, end in spans), default=0)
 
     grid = [PHASE_NO_DATA] * DAY_MINUTES
-    grid[:reported] = [PHASE_AWAKE] * reported
+    grid[:reported] = [PHASE_IDLE] * reported
     _paint(grid, activity, "EVENT", PHASE_ACTIVE)
     _paint(grid, rest, "EVENT", PHASE_DAY_SLEEP)
     _paint_night(grid, night)
@@ -312,7 +310,6 @@ class Pet:
     longitude: float | None = None
     place_name: str | None = None
     place_address: str | None = None
-    area_name: str | None = None
     resting_since: datetime | None = None
     last_night_sleep_s: int | None = None
     last_night_start: datetime | None = None
@@ -406,7 +403,6 @@ class Pet:
         if not raw:
             return
         self.activity_type = raw.get("__typename")
-        self.area_name = raw.get("areaName")
         self.resting_since = _as_datetime(raw.get("start")) if self.activity_type == "OngoingRest" else None
         if self.activity_type == ACTIVITY_ONGOING_WALK:
             positions = raw.get("positions") or []

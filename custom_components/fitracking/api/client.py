@@ -32,15 +32,10 @@ class FiClient:
         self._session = session
         self._email = email
         self._password = password
-        self._user_id: str | None = None
         self._login_lock = asyncio.Lock()
 
-    @property
-    def user_id(self) -> str | None:
-        return self._user_id
-
-    async def async_login(self) -> str:
-        """Authenticate and keep the session cookie. Returns the Fi user id."""
+    async def async_login(self) -> None:
+        """Authenticate and keep the session cookie."""
         async with self._login_lock:
             try:
                 async with self._session.post(
@@ -59,11 +54,9 @@ class FiClient:
 
             if error := _login_error(payload):
                 raise FiAuthError(error)
-            user_id = payload.get("userId")
-            if not user_id:
+            # Fi answers 200 with no userId when it has not actually signed in.
+            if not payload.get("userId"):
                 raise FiAuthError("Fi login returned no user id")
-            self._user_id = user_id
-            return user_id
 
     async def _async_graphql(self, document: str, variables: dict | None = None, *, retry_auth: bool = True) -> dict:
         """POST a document. Re-authenticates once if Fi expired the session."""

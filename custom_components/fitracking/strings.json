@@ -41,7 +41,7 @@
           "night_sleep": "Night sleep",
           "day_sleep": "Day sleep",
           "active": "Active",
-          "awake": "Awake",
+          "idle": "Idle",
           "offline": "Collar off",
           "no_data": "No data yet"
         }
