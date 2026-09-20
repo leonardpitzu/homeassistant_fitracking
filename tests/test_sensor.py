@@ -7,12 +7,25 @@ from homeassistant.components.sensor import SensorStateClass
 
 from custom_components.fitracking.api.models import PERIODS, Stats
 from custom_components.fitracking.const import (
+    CONNECTION_ICONS,
+    CONNECTION_OFFLINE,
+    CONNECTION_STATES,
     SENSOR_STATS_BY_TIME,
     SENSOR_STATS_BY_TYPE,
 )
 from custom_components.fitracking.sensor import STAT_META, PetBehaviorSensor
 
 STATS_FIELDS = {field.name for field in fields(Stats)}
+
+
+def test_every_connection_state_has_an_icon():
+    """The sensor's options are the icon keys, so a gap would break its icon."""
+    assert set(CONNECTION_STATES.values()) | {CONNECTION_OFFLINE} == set(CONNECTION_ICONS)
+
+
+def test_fi_typenames_are_not_the_state():
+    """`ConnectedToUser` is Fi's GraphQL type, not something to show a user."""
+    assert not any(state.startswith("ConnectedTo") for state in CONNECTION_ICONS)
 
 
 def test_every_stat_type_has_metadata():

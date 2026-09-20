@@ -521,16 +521,20 @@ series:
 
 ## Connection sources
 
-The collar picks the cheapest transport available and the `Connected To` sensor reports which one is in use:
+The collar picks the cheapest transport available and the `Connected To` sensor
+reports which one is in use. Fi names these with a GraphQL `__typename`, which is
+no use on a dashboard, so the sensor is an enum with proper states:
 
-| State | Meaning |
-|---|---|
-| `ConnectedToBase` | In Bluetooth range of a Fi Base — lowest power |
-| `ConnectedToUser` | In Bluetooth range of a phone running the Fi app |
-| `ConnectedToCellular` | Reporting over LTE-M, GPS active — highest power |
-| `Unknown` | Offline |
+| State | Shows as | Meaning |
+|---|---|---|
+| `base` | Fi Base | In Bluetooth range of a Fi Base — lowest power |
+| `phone` | With you | In Bluetooth range of a phone running the Fi app |
+| `wifi` | Wi-Fi | On a known Wi-Fi network |
+| `cellular` | Cellular | Reporting over LTE-M, GPS active — highest power |
+| `offline` | Offline | Out of reach, or on a transport Fi has not named before |
 
-A collar sitting on `ConnectedToCellular` while at home usually means the Base is out of Bluetooth range.
+A collar sitting on `cellular` while at home usually means the Base is out of
+Bluetooth range.
 
 ## Differences from upstream
 

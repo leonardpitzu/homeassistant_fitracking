@@ -16,4 +16,22 @@ BEHAVIOR_META = {
     "scratching": {"name": "Scratching", "icon": "mdi:hand-back-right"},
 }
 
+# Fi names the collar's transport with a GraphQL __typename. These are the
+# states the sensor reports instead, so the UI says "With you" rather than
+# "ConnectedToUser".
+CONNECTION_STATES = {
+    "ConnectedToBase": "base",
+    "ConnectedToUser": "phone",
+    "ConnectedToCellular": "cellular",
+    "ConnectedToWifi": "wifi",
+}
+CONNECTION_OFFLINE = "offline"
+CONNECTION_ICONS = {
+    "base": "mdi:router-wireless",
+    "phone": "mdi:cellphone",
+    "cellular": "mdi:signal-variant",
+    "wifi": "mdi:wifi",
+    CONNECTION_OFFLINE: "mdi:cloud-off-outline",
+}
+
 MANUFACTURER = "Fi"

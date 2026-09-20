@@ -12,7 +12,15 @@ from homeassistant.helpers.icon import icon_for_battery_level
 
 from .api import DAY_MINUTES, PHASES
 from .api.models import PHASE_NO_DATA
-from .const import BEHAVIOR_META, DOMAIN, SENSOR_STATS_BY_TIME, SENSOR_STATS_BY_TYPE
+from .const import (
+    BEHAVIOR_META,
+    CONNECTION_ICONS,
+    CONNECTION_OFFLINE,
+    CONNECTION_STATES,
+    DOMAIN,
+    SENSOR_STATS_BY_TIME,
+    SENSOR_STATS_BY_TYPE,
+)
 from .entity import FiBaseEntity, FiPetEntity
 
 LOGGER = logging.getLogger(__name__)
@@ -86,7 +94,6 @@ GENERIC_SENSORS = {
     "Activity Type": "mdi:run",
     "Current Place Name": "mdi:map-marker-radius",
     "Current Place Address": "mdi:map-marker",
-    "Connected To": "mdi:human-greeting-proximity",
 }
 
 
@@ -103,6 +110,7 @@ async def async_setup_entry(hass, config_entry, async_add_devices):
         new_devices.append(PetLastNightSleepSensor(coordinator, pet))
         new_devices.append(PetRestingSinceSensor(coordinator, pet))
         new_devices.append(PetDayPhaseSensor(coordinator, pet))
+        new_devices.append(PetConnectionSensor(coordinator, pet))
         for stat_type in SENSOR_STATS_BY_TYPE:
             for stat_time in SENSOR_STATS_BY_TIME:
                 new_devices.append(PetStatsSensor(coordinator, pet, stat_type, stat_time))
@@ -162,9 +170,36 @@ class PetGenericSensor(FiPetEntity, SensorEntity):
             return self.pet.activity_type
         if self._stat_type == "Current Place Name":
             return self.pet.place_name
-        if self._stat_type == "Current Place Address":
-            return self.pet.place_address
-        return self.device.connection_state_type if self.device else None
+        return self.pet.place_address
+
+
+class PetConnectionSensor(FiPetEntity, SensorEntity):
+    """Which transport the collar was last reachable on."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(CONNECTION_ICONS)
+    _attr_translation_key = "connection"
+
+    @property
+    def name(self):
+        return f"{self.pet.name} Connected To"
+
+    @property
+    def unique_id(self):
+        return f"{self.pet.pet_id}-connected-to"
+
+    @property
+    def native_value(self):
+        raw = self.device.connection_state_type if self.device else None
+        if not raw:
+            return None
+        # Fi's union can grow; a member we do not know is not a transport we
+        # can name, and the collar is out of reach either way.
+        return CONNECTION_STATES.get(raw, CONNECTION_OFFLINE)
+
+    @property
+    def icon(self):
+        return CONNECTION_ICONS.get(self.native_value, "mdi:help-circle-outline")
 
 
 class PetBehaviorSensor(FiPetEntity, SensorEntity):

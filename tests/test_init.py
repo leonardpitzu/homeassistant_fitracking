@@ -83,7 +83,7 @@ async def test_entry_unloads_cleanly(hass, mock_client):
         ("sensor.scottie_collar_battery_level", "77"),
         ("sensor.scottie_weekly_sleep", "1646.75"),  # 98805s -> minutes
         ("sensor.scottie_last_night_sleep", "663.72"),
-        ("sensor.scottie_connected_to", "ConnectedToBase"),
+        ("sensor.scottie_connected_to", "base"),
         ("sensor.scottie_current_place_name", "Home"),
         ("sensor.kitchen_base", "Online"),
         ("binary_sensor.scottie_collar_battery_charging", "off"),

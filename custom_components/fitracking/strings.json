@@ -45,6 +45,15 @@
           "offline": "Collar off",
           "no_data": "No data yet"
         }
+      },
+      "connection": {
+        "state": {
+          "base": "Fi Base",
+          "phone": "With you",
+          "cellular": "Cellular",
+          "wifi": "Wi-Fi",
+          "offline": "Offline"
+        }
       }
     }
   }
