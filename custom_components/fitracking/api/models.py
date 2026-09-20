@@ -207,7 +207,7 @@ class Pet:
             sleep_s, nap_s = _parse_rest(pet_raw.get(f"{prefix}Rest"))
             stats[period] = Stats(steps=steps, goal=goal, distance_m=distance, sleep_s=sleep_s, nap_s=nap_s)
         self.stats = stats
-        self._apply_overnight(pet_raw.get("overnightRestSummary"))
+        self._apply_overnight(pet_raw.get("lastNight"), pet_raw.get("priorNight"))
         self.behavior_events = parse_behavior_trends(trends_raw, midnight)
 
     def _apply_location(self, raw: dict | None) -> None:
@@ -230,16 +230,23 @@ class Pet:
         self.place_name = place.get("name")
         self.place_address = place.get("address")
 
-    def _apply_overnight(self, raw: dict | None) -> None:
-        # Fi returns UnavailableOvernightRestSummary until the night is settled.
-        if not raw or raw.get("__typename") != "ConcreteOvernightRestSummary":
-            self.last_night_sleep_s = None
-            self.last_night_start = None
-            self.last_night_end = None
-            return
-        self.last_night_sleep_s = _as_int(raw.get("sleepSeconds"))
-        self.last_night_start = _as_datetime(raw.get("sleepStart"))
-        self.last_night_end = _as_datetime(raw.get("sleepEnd"))
+    def _apply_overnight(self, *candidates: dict | None) -> None:
+        """Take the newest settled night, newest candidate first.
+
+        Fi answers UnavailableOvernightRestSummary for a night that has not
+        ended yet, so between local midnight and the moment the dog wakes the
+        newest candidate is still in progress and the one before it is the
+        night just finished.
+        """
+        for raw in candidates:
+            if raw and raw.get("__typename") == "ConcreteOvernightRestSummary":
+                self.last_night_sleep_s = _as_int(raw.get("sleepSeconds"))
+                self.last_night_start = _as_datetime(raw.get("sleepStart"))
+                self.last_night_end = _as_datetime(raw.get("sleepEnd"))
+                return
+        self.last_night_sleep_s = None
+        self.last_night_start = None
+        self.last_night_end = None
 
 
 def parse_behavior_trends(raw: dict | None, midnight: datetime) -> dict[str, list[datetime]]:

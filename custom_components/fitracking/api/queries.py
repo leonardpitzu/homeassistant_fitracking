@@ -82,8 +82,13 @@ query {
 
 # Everything per-pet in a single round trip. GraphQL reports per-field errors
 # alongside partial data, so one failing section cannot blank the others.
+#
+# Fi keys a night by the evening it BEGAN and answers Unavailable until that
+# night ends, so last night lives under yesterday's date from the moment it
+# settles -- and under the day before that between local midnight and the
+# moment the current night settles. Both are asked for in the one round trip.
 PET_DETAIL = """
-query PetDetail($petId: ID!, $today: DateTime!) {
+query PetDetail($petId: ID!, $lastNight: DateTime!, $priorNight: DateTime!) {
   pet(id: $petId) {
     ongoingActivity {
       __typename
@@ -104,15 +109,8 @@ query PetDetail($petId: ID!, $today: DateTime!) {
     dailyRest: restSummaryFeed(cursor: null, period: DAILY, limit: 1) { ...RestFeedDetails }
     weeklyRest: restSummaryFeed(cursor: null, period: WEEKLY, limit: 1) { ...RestFeedDetails }
     monthlyRest: restSummaryFeed(cursor: null, period: MONTHLY, limit: 1) { ...RestFeedDetails }
-    overnightRestSummary(date: $today) {
-      __typename
-      ... on ConcreteOvernightRestSummary {
-        date
-        sleepStart
-        sleepEnd
-        sleepSeconds
-      }
-    }
+    lastNight: overnightRestSummary(date: $lastNight) { ...OvernightDetails }
+    priorNight: overnightRestSummary(date: $priorNight) { ...OvernightDetails }
   }
   getPetHealthTrendsForPet(petId: $petId, period: DAY) {
     behaviorTrends {
@@ -123,6 +121,16 @@ query PetDetail($petId: ID!, $today: DateTime!) {
         }
       }
     }
+  }
+}
+
+fragment OvernightDetails on OvernightRestSummary {
+  __typename
+  ... on ConcreteOvernightRestSummary {
+    date
+    sleepStart
+    sleepEnd
+    sleepSeconds
   }
 }
 

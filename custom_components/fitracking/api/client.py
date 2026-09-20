@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeout
 
@@ -110,9 +110,12 @@ class FiClient:
                 if (base := Base.parse(raw)) is not None:
                     bases.append(base)
 
-        today = midnight.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        nights = {
+            "lastNight": _fi_date(midnight - timedelta(days=1)),
+            "priorNight": _fi_date(midnight - timedelta(days=2)),
+        }
         results = await asyncio.gather(
-            *(self._async_pet_detail(pet, midnight, today) for pet in pets),
+            *(self._async_pet_detail(pet, midnight, nights) for pet in pets),
             return_exceptions=True,
         )
         for pet, result in zip(pets, results, strict=True):
@@ -121,8 +124,8 @@ class FiClient:
                 LOGGER.warning("Could not refresh pet %s: %s", pet.name, result)
         return FiData(pets=pets, bases=bases)
 
-    async def _async_pet_detail(self, pet: Pet, midnight: datetime, today: str) -> None:
-        data = await self._async_graphql(queries.PET_DETAIL, {"petId": pet.pet_id, "today": today})
+    async def _async_pet_detail(self, pet: Pet, midnight: datetime, nights: dict[str, str]) -> None:
+        data = await self._async_graphql(queries.PET_DETAIL, {"petId": pet.pet_id} | nights)
         pet.apply_detail(data.get("pet"), data.get("getPetHealthTrendsForPet"), midnight)
 
     async def async_set_led(self, module_id: str, enabled: bool) -> None:
@@ -137,6 +140,10 @@ class FiClient:
     async def async_set_lost_mode(self, module_id: str, lost: bool) -> None:
         mode = queries.PET_MODE_LOST if lost else queries.PET_MODE_NORMAL
         await self._async_graphql(queries.SET_DEVICE_OPS, {"input": {"moduleId": module_id, "mode": mode}})
+
+
+def _fi_date(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _login_error(payload: object) -> str | None:

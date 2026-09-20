@@ -81,26 +81,40 @@ def test_distance_is_kept_in_metres():
     assert _pet().stats["WEEKLY"].distance_m == 2546.0
 
 
+def _overnight(seconds, *, start="2026-09-18T20:15:00.000Z", end="2026-09-19T06:00:00.000Z"):
+    return {
+        "__typename": "ConcreteOvernightRestSummary",
+        "date": "2026-09-19T12:00:00.000Z",
+        "sleepStart": start,
+        "sleepEnd": end,
+        "sleepSeconds": seconds,
+    }
+
+
+UNAVAILABLE = {"__typename": "UnavailableOvernightRestSummary"}
+
+
 def test_overnight_unavailable_is_none():
     """Fi returns UnavailableOvernightRestSummary while the night is unsettled."""
-    pet = _pet(_detail(overnightRestSummary={"__typename": "UnavailableOvernightRestSummary"}))
+    pet = _pet(_detail(lastNight=UNAVAILABLE, priorNight=UNAVAILABLE))
     assert pet.last_night_sleep_s is None
 
 
 def test_overnight_concrete_is_read():
-    pet = _pet(
-        _detail(
-            overnightRestSummary={
-                "__typename": "ConcreteOvernightRestSummary",
-                "date": "2026-09-19T12:00:00.000Z",
-                "sleepStart": "2026-09-18T20:15:00.000Z",
-                "sleepEnd": "2026-09-19T06:00:00.000Z",
-                "sleepSeconds": 39823,
-            }
-        )
-    )
+    pet = _pet(_detail(lastNight=_overnight(39823)))
     assert pet.last_night_sleep_s == 39823
     assert pet.last_night_start == datetime(2026, 9, 18, 20, 15, tzinfo=UTC)
+
+
+def test_overnight_falls_back_while_the_current_night_runs():
+    """Between local midnight and waking, yesterday's night is still in progress."""
+    pet = _pet(_detail(lastNight=UNAVAILABLE, priorNight=_overnight(39823)))
+    assert pet.last_night_sleep_s == 39823
+
+
+def test_overnight_prefers_the_newer_night():
+    pet = _pet(_detail(lastNight=_overnight(40306), priorNight=_overnight(58982)))
+    assert pet.last_night_sleep_s == 40306
 
 
 def test_ongoing_rest_records_when_it_started():

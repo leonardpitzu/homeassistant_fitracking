@@ -45,8 +45,8 @@ Two extra sensors exist because of this:
 
 | Sensor | Meaning |
 |---|---|
-| `Last Night Sleep` | Fi's settled overnight total, the figure the Fi app shows. `unknown` until the night is finalised, with `sleep_start` / `sleep_end` attributes. |
-| `Resting Since` | Timestamp the in-progress rest session began, or `unknown` when the pet is active. |
+| `Last Night Sleep` | Fi's settled overnight total, the figure the Fi app shows. Keyed by the evening the night began, so the integration asks Fi for both candidate evenings and reports the most recent one that has finished. `unknown` only when neither has, with `sleep_start` / `sleep_end` attributes. |
+| `Resting Since` | Timestamp Fi's current `OngoingRest` began, or `unknown` while the pet is on a walk. Fi means "settled at a place" here, not "asleep", so this keeps running after the dog wakes up. |
 
 Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `max`:
 

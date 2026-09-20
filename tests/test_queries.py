@@ -61,8 +61,13 @@ def test_no_user_details_are_requested():
 
 def test_pet_detail_declares_its_variables():
     assert "$petId" in queries.PET_DETAIL
-    assert "$today" in queries.PET_DETAIL
-    assert "query PetDetail($petId: ID!, $today: DateTime!)" in queries.PET_DETAIL
+    assert "query PetDetail($petId: ID!, $lastNight: DateTime!, $priorNight: DateTime!)" in queries.PET_DETAIL
+
+
+def test_pet_detail_asks_for_two_nights():
+    """A night keyed by the evening it began needs both candidate evenings."""
+    assert "lastNight: overnightRestSummary(date: $lastNight)" in queries.PET_DETAIL
+    assert "priorNight: overnightRestSummary(date: $priorNight)" in queries.PET_DETAIL
 
 
 def test_place_is_scoped_to_ongoing_rest():
