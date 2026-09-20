@@ -35,6 +35,14 @@ PHASES = (
     PHASE_NO_DATA,
 )
 
+# A day runs night, day, next night. Fi settles a night only the morning after,
+# so the evening one has to be recognised while it is happening: rest that is
+# still running at the collar's last report and started this late is the night
+# beginning, not another nap. Brief stirs inside it stay inside it -- Fi's own
+# render pad is ~12 minutes, so the tolerance sits just above that.
+NIGHT_EVENING_START = 18 * 60
+NIGHT_GAP_TOLERANCE = 15
+
 
 def _as_int(value: object) -> int | None:
     if value is None or isinstance(value, bool):
@@ -214,6 +222,33 @@ def _collapse(grid: list[str]) -> tuple[DaySegment, ...]:
     return tuple(segments)
 
 
+def _evening_night_start(grid: list[str], reported: int) -> int | None:
+    """Where tonight's rest began, walking back from the collar's last report.
+
+    Rest still running at the end of the day is the next night starting; a nap
+    is over by then. Returns None when the dog is up, or when the run reaches
+    back past the evening and so belongs to the day instead.
+    """
+    start: int | None = None
+    gap = 0
+    for minute in range(reported - 1, NIGHT_EVENING_START - 1, -1):
+        if grid[minute] == PHASE_DAY_SLEEP:
+            start, gap = minute, 0
+            continue
+        gap += 1
+        if gap > NIGHT_GAP_TOLERANCE:
+            break
+    return start
+
+
+def _paint_night(grid: list[str], window: tuple[int, int] | None) -> None:
+    if window is None:
+        return
+    for minute in range(*window):
+        if grid[minute] == PHASE_DAY_SLEEP:
+            grid[minute] = PHASE_NIGHT_SLEEP
+
+
 def build_day_phases(
     rest_raw: dict | None, activity_raw: dict | None, night: tuple[int, int] | None
 ) -> tuple[DaySegment, ...]:
@@ -238,10 +273,9 @@ def build_day_phases(
     grid[:reported] = [PHASE_AWAKE] * reported
     _paint(grid, activity, "EVENT", PHASE_ACTIVE)
     _paint(grid, rest, "EVENT", PHASE_DAY_SLEEP)
-    if night is not None:
-        for minute in range(*night):
-            if grid[minute] == PHASE_DAY_SLEEP:
-                grid[minute] = PHASE_NIGHT_SLEEP
+    _paint_night(grid, night)
+    if (evening := _evening_night_start(grid, reported)) is not None:
+        _paint_night(grid, (evening, reported))
     # Nothing is knowable while the collar is off, so this goes on last.
     _paint(grid, rest, "DEVICE_OFF", PHASE_OFFLINE)
     _paint(grid, activity, "DEVICE_OFF", PHASE_OFFLINE)

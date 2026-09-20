@@ -64,7 +64,7 @@ day carries exactly one phase**, so the six always add up to 1440.
 
 | Phase | Meaning |
 |---|---|
-| `night_sleep` | Rest belonging to last night, clipped to today — bounded by Fi's settled `sleepEnd`, or open-ended while Fi still reports the night as running |
+| `night_sleep` | Rest belonging to a night rather than to the day — last night's tail after midnight, and the next night once the dog settles into it |
 | `day_sleep` | Any other rest |
 | `active` | Fi judged the dog active — walks and everything else |
 | `awake` | Reporting, but neither resting nor active |
@@ -88,9 +88,17 @@ Two things to know before reading the totals as durations. Fi stretches any even
 shorter than its minimum render width to that width, so short slices — the
 three-minute `active` stubs either side of a long rest — are placements, not
 measurements; the bar mirrors what the Fi app draws, and the `Active` stat sensor
-carries Fi's own figure. And a night is keyed by the evening it began, so the
-hours before midnight sit on *yesterday's* bar; today's starts at 00:00 with
-whatever of that night ran past it.
+carries Fi's own figure. And the hours before midnight sit on *yesterday's* bar:
+a night is keyed by the evening it began, so today starts at 00:00 with whatever
+of last night ran past it.
+
+A day is night, day, next night, and the two nights are recognised differently.
+The morning one is Fi's own: bounded by the settled session's `sleepEnd`, or left
+open while Fi still answers `Unavailable`, which is Fi saying the dog is *in* that
+night. The evening one cannot be — Fi does not settle it until the next morning —
+so it is read off the bar instead: rest still running at the collar's last report,
+begun after 18:00, is the night starting rather than another nap. Stirs shorter
+than 15 minutes stay inside it, which is just above Fi's own render pad.
 
 Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `max`:
 
@@ -230,6 +238,8 @@ series:
     name: Night sleep
     color: "#5B37C4"
     stroke_width: 26
+    show:
+      legend_value: false
     data_generator: >-
       const P='night_sleep';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
@@ -238,6 +248,8 @@ series:
     name: Day sleep
     color: "#9D5CFF"
     stroke_width: 26
+    show:
+      legend_value: false
     data_generator: >-
       const P='day_sleep';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
@@ -246,6 +258,8 @@ series:
     name: Active
     color: "#14CD71"
     stroke_width: 26
+    show:
+      legend_value: false
     data_generator: >-
       const P='active';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
@@ -254,6 +268,8 @@ series:
     name: Awake
     color: "#7A8290"
     stroke_width: 26
+    show:
+      legend_value: false
     data_generator: >-
       const P='awake';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
@@ -262,11 +278,16 @@ series:
     name: Collar off
     color: "#3C424B"
     stroke_width: 26
+    show:
+      legend_value: false
     data_generator: >-
       const P='offline';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
       a=b+s.start*6e4,z=a+s.minutes*6e4;o.push([a,1],[z,1],[z+1,null]);});return o;
 ```
+
+`legend_value: false` is what keeps the legend from reading `Night sleep: n/a` —
+every series carries the same enum state, so there is no number to show there.
 
 The totals read well as a caption underneath:
 
