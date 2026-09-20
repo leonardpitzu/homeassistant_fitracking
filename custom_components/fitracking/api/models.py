@@ -10,10 +10,30 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from itertools import groupby
 
 from .queries import ACTIVITY_ONGOING_WALK, PET_MODE_LOST
 
 PERIODS = ("DAILY", "WEEKLY", "MONTHLY")
+
+DAY_MINUTES = 24 * 60
+
+# One of these is assigned to every minute of the local day, so the phases
+# always add up to 1440 no matter what Fi did or did not report.
+PHASE_NIGHT_SLEEP = "night_sleep"
+PHASE_DAY_SLEEP = "day_sleep"
+PHASE_ACTIVE = "active"
+PHASE_AWAKE = "awake"
+PHASE_OFFLINE = "offline"
+PHASE_NO_DATA = "no_data"
+PHASES = (
+    PHASE_NIGHT_SLEEP,
+    PHASE_DAY_SLEEP,
+    PHASE_ACTIVE,
+    PHASE_AWAKE,
+    PHASE_OFFLINE,
+    PHASE_NO_DATA,
+)
 
 
 def _as_int(value: object) -> int | None:
@@ -41,6 +61,11 @@ def _as_datetime(value: object) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _is_settled(raw: dict | None) -> bool:
+    """Fi answers UnavailableOvernightRestSummary until a night has ended."""
+    return bool(raw) and raw.get("__typename") == "ConcreteOvernightRestSummary"
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,15 +145,17 @@ class Stats:
     distance_m: float | None = None
     sleep_s: int | None = None
     nap_s: int | None = None
+    active_s: int | None = None
 
 
-def _parse_activity(raw: dict | None) -> tuple[int | None, int | None, float | None]:
+def _parse_activity(raw: dict | None) -> tuple[int | None, int | None, float | None, int | None]:
     if not raw:
-        return None, None, None
+        return None, None, None, None
     return (
         _as_int(raw.get("totalSteps")),
         _as_int(raw.get("stepGoal")),
         _as_float(raw.get("totalDistance")),
+        _as_int(raw.get("totalActiveTimeSeconds")),
     )
 
 
@@ -143,6 +170,82 @@ def _parse_rest(raw: dict | None) -> tuple[int | None, int | None]:
     if not summary:
         return None, None
     return _as_int(summary.get("sleepSecondsTotal")), _as_int(summary.get("napSecondsTotal"))
+
+
+@dataclass(frozen=True, slots=True)
+class DaySegment:
+    """A run of consecutive minutes of the local day spent in one phase."""
+
+    phase: str
+    start_min: int
+    minutes: int
+
+
+def _intervals(raw: dict | None) -> list[dict]:
+    return ((raw or {}).get("segmentedTimeline") or {}).get("intervals") or []
+
+
+def _span(interval: dict) -> tuple[int, int] | None:
+    """One interval as [start, end) minutes of the local day, or None if empty."""
+    offset = _as_float(interval.get("offset"))
+    length = _as_float(interval.get("length"))
+    if offset is None or length is None:
+        return None
+    start = max(0, int(offset // 60))
+    end = min(DAY_MINUTES, int((offset + length) // 60))
+    return (start, end) if end > start else None
+
+
+def _paint(grid: list[str], intervals: list[dict], interval_type: str, phase: str) -> None:
+    for interval in intervals:
+        if interval.get("intervalType") != interval_type:
+            continue
+        if (span := _span(interval)) is not None:
+            grid[span[0] : span[1]] = [phase] * (span[1] - span[0])
+
+
+def _collapse(grid: list[str]) -> tuple[DaySegment, ...]:
+    segments: list[DaySegment] = []
+    start = 0
+    for phase, run in groupby(grid):
+        minutes = sum(1 for _ in run)
+        segments.append(DaySegment(phase=phase, start_min=start, minutes=minutes))
+        start += minutes
+    return tuple(segments)
+
+
+def build_day_phases(
+    rest_raw: dict | None, activity_raw: dict | None, night: tuple[int, int] | None
+) -> tuple[DaySegment, ...]:
+    """Give every minute of the local day exactly one phase.
+
+    Rest is painted over activity where the two overlap: Fi stretches any event
+    shorter than its minimum render width to that width, and those stubs
+    straddle genuine rest. For the same reason a phase's total here is a
+    placement, not a duration -- Fi's own totals stay on the stat sensors.
+
+    Minutes Fi has not reported on yet stay `no_data`, which is what lets the
+    phases add up to a full 1440 while the day is still running.
+    """
+    rest = _intervals(rest_raw)
+    activity = _intervals(activity_raw)
+    if not rest and not activity:
+        return ()
+    spans = [span for item in rest + activity if (span := _span(item)) is not None]
+    reported = max((end for _, end in spans), default=0)
+
+    grid = [PHASE_NO_DATA] * DAY_MINUTES
+    grid[:reported] = [PHASE_AWAKE] * reported
+    _paint(grid, activity, "EVENT", PHASE_ACTIVE)
+    _paint(grid, rest, "EVENT", PHASE_DAY_SLEEP)
+    if night is not None:
+        for minute in range(*night):
+            if grid[minute] == PHASE_DAY_SLEEP:
+                grid[minute] = PHASE_NIGHT_SLEEP
+    # Nothing is knowable while the collar is off, so this goes on last.
+    _paint(grid, rest, "DEVICE_OFF", PHASE_OFFLINE)
+    _paint(grid, activity, "DEVICE_OFF", PHASE_OFFLINE)
+    return _collapse(grid)
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +279,8 @@ class Pet:
     last_night_sleep_s: int | None = None
     last_night_start: datetime | None = None
     last_night_end: datetime | None = None
+    night_in_progress: bool = False
+    day_segments: tuple[DaySegment, ...] = ()
     stats: dict[str, Stats] = field(default_factory=dict)
     behavior_events: dict[str, list[datetime]] = field(default_factory=dict)
 
@@ -197,19 +302,51 @@ class Pet:
             device=Device.parse(raw.get("device")),
         )
 
-    def apply_detail(self, pet_raw: dict | None, trends_raw: dict | None, midnight: datetime) -> None:
+    def apply_detail(self, data: dict | None, midnight: datetime) -> None:
         """Merge one PET_DETAIL response into this pet."""
-        pet_raw = pet_raw or {}
+        data = data or {}
+        pet_raw = data.get("pet") or {}
         self._apply_location(pet_raw.get("ongoingActivity"))
         stats: dict[str, Stats] = {}
         for period in PERIODS:
             prefix = period.lower()
-            steps, goal, distance = _parse_activity(pet_raw.get(f"{prefix}Activity"))
+            steps, goal, distance, active_s = _parse_activity(pet_raw.get(f"{prefix}Activity"))
             sleep_s, nap_s = _parse_rest(pet_raw.get(f"{prefix}Rest"))
-            stats[period] = Stats(steps=steps, goal=goal, distance_m=distance, sleep_s=sleep_s, nap_s=nap_s)
+            stats[period] = Stats(
+                steps=steps,
+                goal=goal,
+                distance_m=distance,
+                sleep_s=sleep_s,
+                nap_s=nap_s,
+                active_s=active_s,
+            )
         self.stats = stats
         self._apply_overnight(pet_raw.get("lastNight"), pet_raw.get("priorNight"))
-        self.behavior_events = parse_behavior_trends(trends_raw, midnight)
+        self.behavior_events = parse_behavior_trends(data.get("getPetHealthTrendsForPet"), midnight)
+        self.day_segments = build_day_phases(
+            data.get("restTimeline"),
+            data.get("activityTimeline"),
+            self._night_window(midnight),
+        )
+
+    def _night_window(self, midnight: datetime) -> tuple[int, int] | None:
+        """Last night as [start, end) minutes of today, or None if it missed today.
+
+        The evening that began the night is always yesterday's bar; only what
+        fell after local midnight is today's.
+
+        While Fi still answers Unavailable the dog is *in* that night, so every
+        minute of rest since midnight belongs to it -- the timeline stops at the
+        collar's last report anyway, so the open end cannot over-claim. Once the
+        night settles, sleepEnd bounds it exactly.
+        """
+        if self.night_in_progress:
+            return (0, DAY_MINUTES)
+        if self.last_night_start is None or self.last_night_end is None:
+            return None
+        start = max(0, int((self.last_night_start - midnight).total_seconds() // 60))
+        end = min(DAY_MINUTES, int((self.last_night_end - midnight).total_seconds() // 60))
+        return (start, end) if end > start else None
 
     def _apply_location(self, raw: dict | None) -> None:
         if not raw:
@@ -231,16 +368,17 @@ class Pet:
         self.place_name = place.get("name")
         self.place_address = place.get("address")
 
-    def _apply_overnight(self, *candidates: dict | None) -> None:
-        """Take the newest settled night, newest candidate first.
+    def _apply_overnight(self, last_night: dict | None, prior_night: dict | None) -> None:
+        """Take the newest settled night, and note when none of them has ended.
 
         Fi answers UnavailableOvernightRestSummary for a night that has not
         ended yet, so between local midnight and the moment the dog wakes the
         newest candidate is still in progress and the one before it is the
         night just finished.
         """
-        for raw in candidates:
-            if raw and raw.get("__typename") == "ConcreteOvernightRestSummary":
+        self.night_in_progress = (last_night or {}).get("__typename") == "UnavailableOvernightRestSummary"
+        for raw in (last_night, prior_night):
+            if _is_settled(raw):
                 self.last_night_sleep_s = _as_int(raw.get("sleepSeconds"))
                 self.last_night_start = _as_datetime(raw.get("sleepStart"))
                 self.last_night_end = _as_datetime(raw.get("sleepEnd"))

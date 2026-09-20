@@ -126,7 +126,7 @@ class FiClient:
 
     async def _async_pet_detail(self, pet: Pet, midnight: datetime, nights: dict[str, str]) -> None:
         data = await self._async_graphql(queries.PET_DETAIL, {"petId": pet.pet_id} | nights)
-        pet.apply_detail(data.get("pet"), data.get("getPetHealthTrendsForPet"), midnight)
+        pet.apply_detail(data, midnight)
 
     async def async_set_led(self, module_id: str, enabled: bool) -> None:
         await self._async_graphql(

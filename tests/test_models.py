@@ -10,13 +10,21 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from custom_components.fitracking.api.models import (
+    DAY_MINUTES,
+    PHASE_ACTIVE,
+    PHASE_DAY_SLEEP,
+    PHASE_NIGHT_SLEEP,
+    PHASE_NO_DATA,
+    PHASE_OFFLINE,
     Device,
     LedColor,
     Pet,
     parse_behavior_trends,
 )
 
-MIDNIGHT = datetime(2026, 9, 19)
+# Aware, like dt_util.start_of_local_day(): Fi's timestamps are aware too, and
+# the day timeline is built by subtracting the two.
+MIDNIGHT = datetime(2026, 9, 19, tzinfo=UTC)
 
 
 def _rest(sleep=None, nap=None, *, empty=False):
@@ -38,9 +46,13 @@ def _detail(**overrides):
     return payload
 
 
-def _pet(detail=None, trends=None):
+def _pet(detail=None, trends=None, **root):
     pet = Pet.parse_profile({"id": "p1", "name": "Scottie", "breed": {"name": "Corgi"}})
-    pet.apply_detail(detail if detail is not None else _detail(), trends, MIDNIGHT)
+    payload = {
+        "pet": detail if detail is not None else _detail(),
+        "getPetHealthTrendsForPet": trends,
+    }
+    pet.apply_detail(payload | root, MIDNIGHT)
     return pet
 
 
@@ -198,6 +210,103 @@ class TestDevice:
         assert self._device(mode="LOST_DOG", ledOffAt=None).is_lost is True
 
 
+def _timeline(*intervals):
+    return {"segmentedTimeline": {"intervals": list(intervals)}}
+
+
+def _interval(kind, start_min, minutes):
+    return {"intervalType": kind, "offset": start_min * 60, "length": minutes * 60}
+
+
+class TestDayPhases:
+    """The 1440-minute bar: every minute of the local day gets exactly one phase."""
+
+    def _pet_with(self, rest=None, activity=None, **overrides):
+        return _pet(
+            _detail(**overrides),
+            restTimeline=rest,
+            activityTimeline=activity,
+        )
+
+    def test_rest_events_are_placed_where_they_happened(self):
+        pet = self._pet_with(rest=_timeline(_interval("EVENT", 60, 120)))
+        placed = [item for item in pet.day_segments if item.phase == PHASE_DAY_SLEEP]
+        assert [(item.start_min, item.minutes) for item in placed] == [(60, 120)]
+
+    def test_phases_always_total_a_full_day(self):
+        pet = self._pet_with(
+            rest=_timeline(_interval("EVENT", 0, 400), _interval("NOTHING", 400, 200)),
+            activity=_timeline(_interval("EVENT", 450, 30)),
+        )
+        assert sum(item.minutes for item in pet.day_segments) == DAY_MINUTES
+
+    def test_minutes_fi_has_not_reported_are_not_called_awake(self):
+        """Anything past the collar's last report is unknown, not idle time."""
+        pet = self._pet_with(rest=_timeline(_interval("EVENT", 0, 600)))
+        tail = pet.day_segments[-1]
+        assert (tail.phase, tail.start_min, tail.minutes) == (PHASE_NO_DATA, 600, 840)
+
+    def test_rest_wins_where_a_padded_activity_stub_overlaps_it(self):
+        """Fi stretches short events to a fixed render width, straddling real rest."""
+        pet = self._pet_with(
+            rest=_timeline(_interval("EVENT", 0, 480)),
+            activity=_timeline(_interval("EVENT", 100, 12)),
+        )
+        assert all(item.phase != PHASE_ACTIVE for item in pet.day_segments)
+
+    def test_activity_outside_rest_survives(self):
+        pet = self._pet_with(
+            rest=_timeline(_interval("EVENT", 0, 480)),
+            activity=_timeline(_interval("EVENT", 600, 30)),
+        )
+        active = [item for item in pet.day_segments if item.phase == PHASE_ACTIVE]
+        assert [(item.start_min, item.minutes) for item in active] == [(600, 30)]
+
+    def test_last_nights_session_is_split_out_of_the_days_rest(self):
+        """Only the part of the night after local midnight belongs to today."""
+        pet = self._pet_with(
+            rest=_timeline(_interval("EVENT", 0, 600)),
+            lastNight=_overnight(40306, start="2026-09-18T21:19:00.000Z", end="2026-09-19T05:33:00.000Z"),
+        )
+        by_phase = {item.phase: item for item in pet.day_segments}
+        assert (by_phase[PHASE_NIGHT_SLEEP].start_min, by_phase[PHASE_NIGHT_SLEEP].minutes) == (0, 333)
+        assert by_phase[PHASE_DAY_SLEEP].start_min == 333
+
+    def test_rest_outside_the_night_window_stays_day_sleep(self):
+        pet = self._pet_with(
+            rest=_timeline(_interval("EVENT", 700, 60)),
+            lastNight=_overnight(40306, start="2026-09-18T21:19:00.000Z", end="2026-09-19T05:33:00.000Z"),
+        )
+        assert all(item.phase != PHASE_NIGHT_SLEEP for item in pet.day_segments)
+
+    def test_a_night_still_running_counts_as_night_sleep(self):
+        """Fi answers Unavailable until the night ends: the dog is still in it.
+
+        Without this the early hours read as day rest every single morning, and
+        then silently turn into night sleep once Fi settles the night.
+        """
+        pet = self._pet_with(
+            rest=_timeline(_interval("EVENT", 0, 180)),
+            lastNight=UNAVAILABLE,
+            priorNight=_overnight(40306, start="2026-09-17T21:19:00.000Z", end="2026-09-18T05:33:00.000Z"),
+        )
+        assert [(item.phase, item.minutes) for item in pet.day_segments][0] == (PHASE_NIGHT_SLEEP, 180)
+
+    def test_a_night_fi_never_reported_is_not_assumed_to_be_running(self):
+        """Absent is not the same as unsettled; only Unavailable means in progress."""
+        pet = self._pet_with(rest=_timeline(_interval("EVENT", 0, 180)))
+        assert pet.day_segments[0].phase == PHASE_DAY_SLEEP
+
+    def test_a_charging_collar_reports_nothing_rather_than_idling(self):
+        pet = self._pet_with(rest=_timeline(_interval("EVENT", 0, 60), _interval("DEVICE_OFF", 60, 30)))
+        offline = [item for item in pet.day_segments if item.phase == PHASE_OFFLINE]
+        assert [(item.start_min, item.minutes) for item in offline] == [(60, 30)]
+
+    def test_no_timeline_produces_no_bar(self):
+        """An empty bar must be distinguishable from a day spent doing nothing."""
+        assert self._pet_with().day_segments == ()
+
+
 class TestBehaviorTrends:
     PAYLOAD = {
         "behaviorTrends": [
@@ -232,7 +341,7 @@ class TestBehaviorTrends:
 
     def test_offsets_are_seconds_since_local_midnight(self):
         events = parse_behavior_trends(self.PAYLOAD, MIDNIGHT)
-        assert events["eating"][0] == datetime(2026, 9, 19, 1, 27, 28)
+        assert events["eating"][0] == datetime(2026, 9, 19, 1, 27, 28, tzinfo=UTC)
 
     def test_key_strips_the_period_suffix(self):
         """Fi ids look like "cleaning_self:DAY"; the sensor keys on the stem."""

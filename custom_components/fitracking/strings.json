@@ -33,5 +33,19 @@
             }
         }
     }
+  },
+  "entity": {
+    "sensor": {
+      "day_phase": {
+        "state": {
+          "night_sleep": "Night sleep",
+          "day_sleep": "Day sleep",
+          "active": "Active",
+          "awake": "Awake",
+          "offline": "Collar off",
+          "no_data": "No data yet"
+        }
+      }
+    }
   }
 }

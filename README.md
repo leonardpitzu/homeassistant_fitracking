@@ -22,6 +22,7 @@ Activity and rest statistics are created for every combination of period (`daily
 | Distance | `km` | `distance` | `measurement` |
 | Sleep | `min` | `duration` | `measurement` |
 | Nap | `min` | `duration` | `measurement` |
+| Active | `min` | `duration` | `measurement` |
 | Goal | `steps` | – | `measurement` |
 
 None of these are `total_increasing`. Every value does reset at the start of its
@@ -53,6 +54,43 @@ Two sensors cover what a calendar period cannot say on its own:
 |---|---|
 | `Last Night Sleep` | The night as one unbroken session, uncut by midnight — Fi's settled overnight total. Keyed by the evening the night began, so the integration asks Fi for both candidate evenings and reports the most recent one that has finished. `unknown` only when neither has, with `sleep_start` / `sleep_end` attributes. |
 | `Resting Since` | Timestamp Fi's current `OngoingRest` began, or `unknown` while the pet is on a walk. Fi means "settled at a place" here, not "asleep", so this keeps running after the dog wakes up. |
+
+### Day Phase — the whole day as 1440 minutes
+
+Totals say how much; they do not say *when*. Fi also exposes the two bars its app
+draws on the health page — rest and activity, placed against the local day — and
+the `Day Phase` sensor turns them into one timeline where **every minute of the
+day carries exactly one phase**, so the six always add up to 1440.
+
+| Phase | Meaning |
+|---|---|
+| `night_sleep` | Rest belonging to last night, clipped to today — bounded by Fi's settled `sleepEnd`, or open-ended while Fi still reports the night as running |
+| `day_sleep` | Any other rest |
+| `active` | Fi judged the dog active — walks and everything else |
+| `awake` | Reporting, but neither resting nor active |
+| `offline` | Collar off or charging; nothing is knowable here |
+| `no_data` | The part of the day Fi has not reported on yet |
+
+The state is the phase Fi last reported. The bar itself is on the attributes,
+already ordered and gapless, so a card needs no arithmetic of its own:
+
+```yaml
+day_minutes: 1440
+reported_minutes: 1367
+totals: {night_sleep: 513, day_sleep: 719, active: 79, awake: 0, offline: 59, no_data: 73}
+segments:
+  - {phase: night_sleep, start: 0, minutes: 513}
+  - {phase: active, start: 513, minutes: 6}
+  - {phase: day_sleep, start: 519, minutes: 73}
+```
+
+Two things to know before reading the totals as durations. Fi stretches any event
+shorter than its minimum render width to that width, so short slices — the
+three-minute `active` stubs either side of a long rest — are placements, not
+measurements; the bar mirrors what the Fi app draws, and the `Active` stat sensor
+carries Fi's own figure. And a night is keyed by the evening it began, so the
+hours before midnight sit on *yesterday's* bar; today's starts at 00:00 with
+whatever of that night ran past it.
 
 Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `max`:
 
@@ -130,8 +168,120 @@ An active Fi membership is required — the collar reports nothing without one.
 
 ## Dashboard
 
-Both charts need [apexcharts-card](https://github.com/RomRider/apexcharts-card).
+All three charts need [apexcharts-card](https://github.com/RomRider/apexcharts-card).
 Replace `rex` with your own pet's slug.
+
+### The day as one bar
+
+One 1440-minute-long bar across a 24-hour axis, each phase drawn where it
+happened. Every series reads the same `segments` attribute and draws its own
+phase as thick line runs, so the bar is gapless and the part Fi has not reported
+yet is simply missing from the right-hand end.
+
+```yaml
+type: custom:apexcharts-card
+graph_span: 24h
+span:
+  start: day
+cache: false
+update_interval: 5min
+chart_type: line
+header:
+  show: true
+  title: Day
+  show_states: false
+apex_config:
+  chart:
+    height: 150
+    toolbar:
+      show: false
+  markers:
+    size: 0
+  stroke:
+    curve: straight
+    lineCap: butt
+  legend:
+    show: true
+    position: bottom
+    horizontalAlign: left
+    fontSize: 11px
+    markers:
+      width: 8
+      height: 8
+      radius: 2
+  grid:
+    show: true
+    borderColor: var(--divider-color)
+    yaxis:
+      lines:
+        show: false
+  xaxis:
+    type: datetime
+    tickAmount: 8
+  yaxis:
+    min: 0
+    max: 2
+    show: false
+  tooltip:
+    x:
+      format: HH:mm
+series:
+  - entity: sensor.rex_day_phase
+    name: Night sleep
+    color: "#5B37C4"
+    stroke_width: 26
+    data_generator: >-
+      const P='night_sleep';const d=new Date();d.setHours(0,0,0,0);const
+      b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
+      a=b+s.start*6e4,z=a+s.minutes*6e4;o.push([a,1],[z,1],[z+1,null]);});return o;
+  - entity: sensor.rex_day_phase
+    name: Day sleep
+    color: "#9D5CFF"
+    stroke_width: 26
+    data_generator: >-
+      const P='day_sleep';const d=new Date();d.setHours(0,0,0,0);const
+      b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
+      a=b+s.start*6e4,z=a+s.minutes*6e4;o.push([a,1],[z,1],[z+1,null]);});return o;
+  - entity: sensor.rex_day_phase
+    name: Active
+    color: "#14CD71"
+    stroke_width: 26
+    data_generator: >-
+      const P='active';const d=new Date();d.setHours(0,0,0,0);const
+      b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
+      a=b+s.start*6e4,z=a+s.minutes*6e4;o.push([a,1],[z,1],[z+1,null]);});return o;
+  - entity: sensor.rex_day_phase
+    name: Awake
+    color: "#7A8290"
+    stroke_width: 26
+    data_generator: >-
+      const P='awake';const d=new Date();d.setHours(0,0,0,0);const
+      b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
+      a=b+s.start*6e4,z=a+s.minutes*6e4;o.push([a,1],[z,1],[z+1,null]);});return o;
+  - entity: sensor.rex_day_phase
+    name: Collar off
+    color: "#3C424B"
+    stroke_width: 26
+    data_generator: >-
+      const P='offline';const d=new Date();d.setHours(0,0,0,0);const
+      b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
+      a=b+s.start*6e4,z=a+s.minutes*6e4;o.push([a,1],[z,1],[z+1,null]);});return o;
+```
+
+The totals read well as a caption underneath:
+
+```yaml
+type: markdown
+text_only: true
+entity_id: [sensor.rex_day_phase]
+content: >-
+  {% set t = state_attr('sensor.rex_day_phase', 'totals') or {} %}
+  Night {{ (t.get('night_sleep', 0) / 60) | round(1) }}h &nbsp;·&nbsp;
+  Day {{ (t.get('day_sleep', 0) / 60) | round(1) }}h &nbsp;·&nbsp;
+  Active {{ t.get('active', 0) }}m &nbsp;·&nbsp;
+  Awake {{ t.get('awake', 0) }}m &nbsp;·&nbsp;
+  Off {{ t.get('offline', 0) }}m
+```
 
 ### Behaviours today
 
@@ -381,6 +531,7 @@ A collar sitting on `ConnectedToCellular` while at home usually means the Base i
 | Resilient entity setup | One malformed pet or base aborted the whole platform ([#112](https://github.com/sbabcock23/hass-tryfi/pull/112), [#93](https://github.com/sbabcock23/hass-tryfi/issues/93)) |
 | Modern platform unload | Replaced the deprecated `async_forward_entry_unload` loop |
 | Behaviour sensors added | Barking, eating, drinking, licking and scratching are in Fi's API but absent from `pytryfi` |
+| `Day Phase` and `Active` added | Fi's `getPetBehaviorDetail` places rest and activity against the day, and `ActivitySummary` carries an active-time total; `pytryfi` queries neither |
 
 ## Credits
 

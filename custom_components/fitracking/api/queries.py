@@ -127,6 +127,27 @@ query PetDetail($petId: ID!, $lastNight: DateTime!, $priorNight: DateTime!) {
       }
     }
   }
+  restTimeline: getPetBehaviorDetail(
+    input: {petId: $petId, behaviorId: "rest", period: DAY}
+  ) { ...DayTimelineDetails }
+  activityTimeline: getPetBehaviorDetail(
+    input: {petId: $petId, behaviorId: "activity", period: DAY}
+  ) { ...DayTimelineDetails }
+}
+
+# The two bars the Fi app draws on the health page, placed against the local
+# day: offset and length are seconds from local midnight. Fi pads any event
+# shorter than its minimum render width, so lengths are positions, not totals.
+# behaviorId accepts only rest, activity, steps and the five behaviours already
+# reported -- "sleep" and "nap" are rejected, so the day/night split has to come
+# from overnightRestSummary rather than from a second timeline.
+fragment DayTimelineDetails on PetBehaviorDetail {
+  ... on PetBehaviorDetailDay {
+    behaviorId
+    segmentedTimeline {
+      intervals { intervalType offset length }
+    }
+  }
 }
 
 fragment OvernightDetails on OvernightRestSummary {
@@ -145,6 +166,7 @@ fragment ActivitySummaryDetails on ActivitySummary {
   totalSteps
   stepGoal
   totalDistance
+  totalActiveTimeSeconds
 }
 
 fragment RestFeedDetails on RestFeed {

@@ -81,3 +81,21 @@ def test_place_is_scoped_to_ongoing_rest():
     """`place` is defined on OngoingRest, not the OngoingActivity interface."""
     rest_block = queries.PET_DETAIL.split("... on OngoingRest")[1]
     assert "place" in rest_block.split("}")[0] or "place" in rest_block[:200]
+
+
+def test_both_day_timelines_are_requested():
+    """The bar needs rest and activity placed; Fi keys them by behaviourId."""
+    assert 'behaviorId: "rest", period: DAY' in queries.PET_DETAIL
+    assert 'behaviorId: "activity", period: DAY' in queries.PET_DETAIL
+    for alias in ("restTimeline", "activityTimeline"):
+        assert f"{alias}: getPetBehaviorDetail(" in queries.PET_DETAIL
+
+
+def test_the_timeline_fragment_is_scoped_to_the_day_type():
+    """getPetBehaviorDetail returns a union; the Day member carries the timeline."""
+    assert "... on PetBehaviorDetailDay" in queries.PET_DETAIL
+    assert "segmentedTimeline" in queries.PET_DETAIL
+
+
+def test_active_time_is_requested():
+    assert "totalActiveTimeSeconds" in queries.PET_DETAIL

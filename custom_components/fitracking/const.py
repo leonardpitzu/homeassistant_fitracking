@@ -5,7 +5,7 @@ CONF_POLLING_RATE = "polling"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 SENSOR_STATS_BY_TIME = ["DAILY", "WEEKLY", "MONTHLY"]
-SENSOR_STATS_BY_TYPE = ["STEPS", "DISTANCE", "SLEEP", "NAP", "GOAL"]
+SENSOR_STATS_BY_TYPE = ["STEPS", "DISTANCE", "SLEEP", "NAP", "GOAL", "ACTIVE"]
 
 # Keyed by Fi's own behaviour id; "cleaning_self" is what it calls Licking.
 BEHAVIOR_META = {

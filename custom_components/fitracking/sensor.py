@@ -10,6 +10,8 @@ from homeassistant.components.sensor import (
 from homeassistant.const import PERCENTAGE, UnitOfLength, UnitOfTime
 from homeassistant.helpers.icon import icon_for_battery_level
 
+from .api import DAY_MINUTES, PHASES
+from .api.models import PHASE_NO_DATA
 from .const import BEHAVIOR_META, DOMAIN, SENSOR_STATS_BY_TIME, SENSOR_STATS_BY_TYPE
 from .entity import FiBaseEntity, FiPetEntity
 
@@ -67,6 +69,17 @@ STAT_META = {
         "device_class": None,
         "state_class": SensorStateClass.MEASUREMENT,
     },
+    # Fi's own "Active Time", the green bar on the app's health page. It counts
+    # only the minutes it judged active, so it is far below "not resting".
+    "ACTIVE": {
+        "field": "active_s",
+        "icon": "mdi:run-fast",
+        "unit": UnitOfTime.MINUTES,
+        "divisor": 60,
+        "precision": 0,
+        "device_class": SensorDeviceClass.DURATION,
+        "state_class": SensorStateClass.MEASUREMENT,
+    },
 }
 
 GENERIC_SENSORS = {
@@ -89,6 +102,7 @@ async def async_setup_entry(hass, config_entry, async_add_devices):
         new_devices.append(FiBatterySensor(coordinator, pet))
         new_devices.append(PetLastNightSleepSensor(coordinator, pet))
         new_devices.append(PetRestingSinceSensor(coordinator, pet))
+        new_devices.append(PetDayPhaseSensor(coordinator, pet))
         for stat_type in SENSOR_STATS_BY_TYPE:
             for stat_time in SENSOR_STATS_BY_TIME:
                 new_devices.append(PetStatsSensor(coordinator, pet, stat_type, stat_time))
@@ -278,6 +292,50 @@ class PetLastNightSleepSensor(FiPetEntity, SensorEntity):
         return {
             "sleep_start": self.pet.last_night_start.isoformat() if self.pet.last_night_start else None,
             "sleep_end": self.pet.last_night_end.isoformat() if self.pet.last_night_end else None,
+        }
+
+
+class PetDayPhaseSensor(FiPetEntity, SensorEntity):
+    """Today split into phases, each one placed where it actually happened.
+
+    The state is the phase Fi last reported; the bar itself rides on the
+    attributes, where `segments` covers all 1440 minutes of the local day in
+    order, so a card can draw it without any arithmetic of its own.
+    """
+
+    _attr_icon = "mdi:chart-timeline-variant"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(PHASES)
+    _attr_translation_key = "day_phase"
+
+    @property
+    def name(self):
+        return f"{self.pet.name} Day Phase"
+
+    @property
+    def unique_id(self):
+        return f"{self.pet.pet_id}-day-phase"
+
+    @property
+    def native_value(self):
+        reported = [item for item in self.pet.day_segments if item.phase != PHASE_NO_DATA]
+        return reported[-1].phase if reported else None
+
+    @property
+    def extra_state_attributes(self):
+        segments = self.pet.day_segments
+        if not segments:
+            return {"day_minutes": DAY_MINUTES, "reported_minutes": 0, "totals": {}, "segments": []}
+        totals = dict.fromkeys(PHASES, 0)
+        for segment in segments:
+            totals[segment.phase] += segment.minutes
+        return {
+            "day_minutes": DAY_MINUTES,
+            "reported_minutes": DAY_MINUTES - totals[PHASE_NO_DATA],
+            "totals": totals,
+            "segments": [
+                {"phase": segment.phase, "start": segment.start_min, "minutes": segment.minutes} for segment in segments
+            ],
         }
 
 
