@@ -96,7 +96,10 @@ the settled session's `sleepEnd`, or left open while Fi still answers
 `Unavailable`, which is Fi saying the dog is *in* that night. The evening one
 cannot be, because Fi does not settle a night until the morning after, so it is
 read off the bar instead: rest still running at the collar's last report, begun
-after 18:00, is the night starting rather than another nap. Stirs shorter
+no earlier than two hours before the dog went to bed last time, is the night
+starting rather than another nap. That bedtime comes from last night's own
+`sleepStart`, so the threshold follows the dog rather than the clock, and without
+a settled night to anchor on no evening night is guessed at. Stirs shorter
 than 15 minutes stay inside it, which is just above Fi's own render pad.
 
 Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `max`:

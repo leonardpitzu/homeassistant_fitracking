@@ -299,7 +299,7 @@ class TestDayPhases:
 
     def test_tonights_rest_is_the_next_night_starting(self):
         """A day is night, day, next night: the evening block closes it."""
-        pet = self._pet_with(rest=_timeline(_interval("EVENT", 20 * 60, 180)))
+        pet = self._pet_with(rest=_timeline(_interval("EVENT", 20 * 60, 180)), lastNight=_overnight(40000))
         night = [item for item in pet.day_segments if item.phase == PHASE_NIGHT_SLEEP]
         assert [(item.start_min, item.minutes) for item in night] == [(1200, 180)]
 
@@ -308,20 +308,40 @@ class TestDayPhases:
         pet = self._pet_with(
             rest=_timeline(_interval("EVENT", 19 * 60, 120), _interval("EVENT", 21 * 60 + 6, 114)),
             activity=_timeline(_interval("EVENT", 21 * 60, 6)),
+            lastNight=_overnight(40000),
         )
         night = [item for item in pet.day_segments if item.phase == PHASE_NIGHT_SLEEP]
         assert [(item.start_min, item.minutes) for item in night] == [(1140, 120), (1266, 114)]
 
     def test_an_afternoon_nap_in_progress_is_not_the_night(self):
-        """Rest reaching the last report is only the night once the evening is in."""
-        pet = self._pet_with(rest=_timeline(_interval("EVENT", 13 * 60, 120)))
+        """Rest reaching the last report is only the night once bedtime is near."""
+        pet = self._pet_with(rest=_timeline(_interval("EVENT", 13 * 60, 120)), lastNight=_overnight(40000))
         assert all(item.phase != PHASE_NIGHT_SLEEP for item in pet.day_segments)
 
     def test_an_evening_nap_the_dog_got_up_from_is_not_the_night(self):
         pet = self._pet_with(
             rest=_timeline(_interval("EVENT", 19 * 60, 60)),
             activity=_timeline(_interval("EVENT", 20 * 60 + 30, 60)),
+            lastNight=_overnight(40000),
         )
+        assert all(item.phase != PHASE_NIGHT_SLEEP for item in pet.day_segments)
+
+    def test_going_to_bed_earlier_than_last_night_still_counts(self):
+        """Last night began 20:15, so an 18:30 start is within the margin."""
+        pet = self._pet_with(rest=_timeline(_interval("EVENT", 18 * 60 + 30, 240)), lastNight=_overnight(40000))
+        night = [item for item in pet.day_segments if item.phase == PHASE_NIGHT_SLEEP]
+        assert [(item.start_min, item.minutes) for item in night] == [(1110, 240)]
+
+    def test_an_unbroken_afternoon_does_not_drag_the_night_backwards(self):
+        """Rest from 16:00 to the last report is night only from the margin on."""
+        pet = self._pet_with(rest=_timeline(_interval("EVENT", 16 * 60, 420)), lastNight=_overnight(40000))
+        by_phase = {item.phase: item for item in pet.day_segments}
+        assert by_phase[PHASE_DAY_SLEEP].start_min == 960
+        assert by_phase[PHASE_NIGHT_SLEEP].start_min == 18 * 60 + 15
+
+    def test_without_a_settled_night_the_evening_is_not_guessed_at(self):
+        """There is nothing to anchor a bedtime on, so no night is invented."""
+        pet = self._pet_with(rest=_timeline(_interval("EVENT", 20 * 60, 180)))
         assert all(item.phase != PHASE_NIGHT_SLEEP for item in pet.day_segments)
 
     def test_a_charging_collar_reports_nothing_rather_than_idling(self):

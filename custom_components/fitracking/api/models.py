@@ -37,10 +37,11 @@ PHASES = (
 
 # A day runs night, day, next night. Fi settles a night only the morning after,
 # so the evening one has to be recognised while it is happening: rest that is
-# still running at the collar's last report and started this late is the night
-# beginning, not another nap. Brief stirs inside it stay inside it -- Fi's own
-# render pad is ~12 minutes, so the tolerance sits just above that.
-NIGHT_EVENING_START = 18 * 60
+# still running at the collar's last report, and started no earlier than the dog
+# went to bed last time, is the night beginning rather than another nap. The
+# margin lets an earlier bedtime still count. Brief stirs stay inside the night
+# -- Fi's own render pad is ~12 minutes, so the tolerance sits just above that.
+NIGHT_BEDTIME_MARGIN = 120
 NIGHT_GAP_TOLERANCE = 15
 
 
@@ -222,16 +223,16 @@ def _collapse(grid: list[str]) -> tuple[DaySegment, ...]:
     return tuple(segments)
 
 
-def _evening_night_start(grid: list[str], reported: int) -> int | None:
+def _evening_night_start(grid: list[str], reported: int, earliest: int) -> int | None:
     """Where tonight's rest began, walking back from the collar's last report.
 
     Rest still running at the end of the day is the next night starting; a nap
     is over by then. Returns None when the dog is up, or when the run reaches
-    back past the evening and so belongs to the day instead.
+    back past the dog's bedtime and so belongs to the day instead.
     """
     start: int | None = None
     gap = 0
-    for minute in range(reported - 1, NIGHT_EVENING_START - 1, -1):
+    for minute in range(reported - 1, earliest - 1, -1):
         if grid[minute] == PHASE_DAY_SLEEP:
             start, gap = minute, 0
             continue
@@ -250,7 +251,10 @@ def _paint_night(grid: list[str], window: tuple[int, int] | None) -> None:
 
 
 def build_day_phases(
-    rest_raw: dict | None, activity_raw: dict | None, night: tuple[int, int] | None
+    rest_raw: dict | None,
+    activity_raw: dict | None,
+    night: tuple[int, int] | None,
+    bedtime: int | None,
 ) -> tuple[DaySegment, ...]:
     """Give every minute of the local day exactly one phase.
 
@@ -274,7 +278,7 @@ def build_day_phases(
     _paint(grid, activity, "EVENT", PHASE_ACTIVE)
     _paint(grid, rest, "EVENT", PHASE_DAY_SLEEP)
     _paint_night(grid, night)
-    if (evening := _evening_night_start(grid, reported)) is not None:
+    if bedtime is not None and (evening := _evening_night_start(grid, reported, bedtime)) is not None:
         _paint_night(grid, (evening, reported))
     # Nothing is knowable while the collar is off, so this goes on last.
     _paint(grid, rest, "DEVICE_OFF", PHASE_OFFLINE)
@@ -361,7 +365,23 @@ class Pet:
             data.get("restTimeline"),
             data.get("activityTimeline"),
             self._night_window(midnight),
+            self._bedtime(midnight),
         )
+
+    def _bedtime(self, midnight: datetime) -> int | None:
+        """Earliest minute of today that rest may count as the night starting.
+
+        Anchored on when the dog actually went to bed last time, less a margin
+        so an earlier bedtime is still recognised. Without a settled night there
+        is nothing to anchor on, and an evening night is not guessed at.
+        """
+        if self.last_night_start is None:
+            return None
+        went_to_bed = int((self.last_night_start - midnight).total_seconds() // 60) % DAY_MINUTES
+        # A night that began after midnight says nothing about evening bedtime.
+        if went_to_bed < DAY_MINUTES // 2:
+            return None
+        return went_to_bed - NIGHT_BEDTIME_MARGIN
 
     def _night_window(self, midnight: datetime) -> tuple[int, int] | None:
         """Last night as [start, end) minutes of today, or None if it missed today.
