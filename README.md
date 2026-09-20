@@ -178,8 +178,8 @@ An active Fi membership is required — the collar reports nothing without one.
 
 ## Dashboard
 
-All three charts need [apexcharts-card](https://github.com/RomRider/apexcharts-card).
-Replace `rex` with your own pet's slug.
+The three charts need [apexcharts-card](https://github.com/RomRider/apexcharts-card);
+the controls are built-in cards. Replace `rex` with your own pet's slug.
 
 ### The day as one bar
 
@@ -199,7 +199,7 @@ chart_type: line
 header:
   show: true
   title: Day
-  show_states: false
+  show_states: true
 apex_config:
   chart:
     height: 150
@@ -242,6 +242,7 @@ series:
     stroke_width: 26
     show:
       legend_value: false
+      in_header: false
     data_generator: >-
       const P='night_sleep';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
@@ -252,6 +253,7 @@ series:
     stroke_width: 26
     show:
       legend_value: false
+      in_header: false
     data_generator: >-
       const P='day_sleep';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
@@ -262,6 +264,7 @@ series:
     stroke_width: 26
     show:
       legend_value: false
+      in_header: false
     data_generator: >-
       const P='active';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
@@ -272,6 +275,7 @@ series:
     stroke_width: 26
     show:
       legend_value: false
+      in_header: false
     data_generator: >-
       const P='awake';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
@@ -282,29 +286,33 @@ series:
     stroke_width: 26
     show:
       legend_value: false
+      in_header: false
     data_generator: >-
       const P='offline';const d=new Date();d.setHours(0,0,0,0);const
       b=d.getTime();const o=[];(entity.attributes.segments||[]).forEach(s=>{if(s.phase!==P)return;const
       a=b+s.start*6e4,z=a+s.minutes*6e4;o.push([a,1],[z,1],[z+1,null]);});return o;
+  - entity: sensor.rex_daily_sleep
+    name: Sleep
+    float_precision: 0
+    show:
+      in_chart: false
+      in_header: true
+      legend_value: false
+  - entity: sensor.rex_daily_nap
+    name: Naps
+    float_precision: 0
+    show:
+      in_chart: false
+      in_header: true
+      legend_value: false
 ```
 
-`legend_value: false` is what keeps the legend from reading `Night sleep: n/a` —
-every series carries the same enum state, so there is no number to show there.
-
-The totals read well as a caption underneath:
-
-```yaml
-type: markdown
-text_only: true
-entity_id: [sensor.rex_day_phase]
-content: >-
-  {% set t = state_attr('sensor.rex_day_phase', 'totals') or {} %}
-  Night {{ (t.get('night_sleep', 0) / 60) | round(1) }}h &nbsp;·&nbsp;
-  Day {{ (t.get('day_sleep', 0) / 60) | round(1) }}h &nbsp;·&nbsp;
-  Active {{ t.get('active', 0) }}m &nbsp;·&nbsp;
-  Awake {{ t.get('awake', 0) }}m &nbsp;·&nbsp;
-  Off {{ t.get('offline', 0) }}m
-```
+Two of those series draw nothing. `in_chart: false` with `in_header: true` makes
+Fi's own Sleep and Nap totals ride along as the card's header values, which is
+where the day's numbers belong once the bar itself shows the placement. The
+phase series are pushed out of the header for the same reason — they all carry
+the same enum state, so `in_header: false` keeps the header two values wide and
+`legend_value: false` stops the legend reading `Night sleep: n/a`.
 
 ### Behaviours today
 
@@ -519,6 +527,74 @@ series:
       datalabels: false
 ```
 
+### Collar controls
+
+No custom card needed for these two. Lost Dog mode reaches real hardware, so it
+is worth spending a little config on making the dangerous direction deliberate
+and the current state obvious: a pair of `conditional` cards puts one button in
+the slot at a time, coloured by the state rather than by the action.
+
+```yaml
+- type: button
+  entity: light.rex_collar_light
+  name: Flashlight
+  icon: mdi:flashlight
+  show_state: true
+  tap_action:
+    action: toggle
+  grid_options: {columns: 6, rows: 2}
+
+- type: conditional
+  conditions:
+    - condition: state
+      entity: select.rex_lost_mode
+      state: Safe
+  grid_options: {columns: 6, rows: 2}
+  card:
+    type: button
+    entity: select.rex_lost_mode
+    name: Mark as Lost
+    icon: mdi:map-marker-alert
+    color: grey
+    show_state: true
+    tap_action:
+      action: perform-action
+      perform_action: select.select_option
+      target: {entity_id: select.rex_lost_mode}
+      data: {option: Lost}
+      confirmation:
+        text: Put the collar into Lost Dog mode?
+
+- type: conditional
+  conditions:
+    - condition: state
+      entity: select.rex_lost_mode
+      state: Lost
+  grid_options: {columns: 6, rows: 2}
+  card:
+    type: button
+    entity: select.rex_lost_mode
+    name: Back to Safe
+    icon: mdi:map-marker-alert
+    color: red
+    show_state: true
+    tap_action:
+      action: perform-action
+      perform_action: select.select_option
+      target: {entity_id: select.rex_lost_mode}
+      data: {option: Safe}
+```
+
+`select.select_option` with an explicit `option` is deliberate: `select_next`
+would toggle, but then a tap can set either value and the confirmation would
+have to guard both directions — including the harmless one. Splitting it means
+arming asks first, disarming does not, and the card is red only while the collar
+really is in Lost Dog mode.
+
+The LED reports `rgb` and nothing else, so a `light-brightness` tile feature
+would render a slider that does nothing; the palette lives in the more-info
+dialog instead.
+
 ## Connection sources
 
 The collar picks the cheapest transport available and the `Connected To` sensor
@@ -559,6 +635,7 @@ Bluetooth range.
 | Modern platform unload | Replaced the deprecated `async_forward_entry_unload` loop |
 | Behaviour sensors added | Barking, eating, drinking, licking and scratching are in Fi's API but absent from `pytryfi` |
 | `Day Phase` and `Active` added | Fi's `getPetBehaviorDetail` places rest and activity against the day, and `ActivitySummary` carries an active-time total; `pytryfi` queries neither |
+| `Connected To` reads as English | Upstream surfaced Fi's raw GraphQL `__typename`, so dashboards showed `ConnectedToUser`; it is now a translated enum |
 
 ## Credits
 
