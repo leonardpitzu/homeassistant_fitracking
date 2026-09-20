@@ -166,12 +166,29 @@ apex_config:
   grid:
     show: true
     borderColor: var(--divider-color)
+    yaxis:
+      lines:
+        show: false
+  annotations:
+    yaxis:
+      - y: 1.5
+        borderColor: var(--divider-color)
+        strokeDashArray: 4
+      - y: 2.5
+        borderColor: var(--divider-color)
+        strokeDashArray: 4
+      - y: 3.5
+        borderColor: var(--divider-color)
+        strokeDashArray: 4
+      - y: 4.5
+        borderColor: var(--divider-color)
+        strokeDashArray: 4
   xaxis:
     type: datetime
   yaxis:
-    min: 0.5
-    max: 5.5
-    tickAmount: 5
+    min: 0
+    max: 6
+    tickAmount: 6
     labels:
       formatter: >-
         EVAL:function(v){return
@@ -256,6 +273,14 @@ Each event becomes two points at the same timestamp, one either side of the lane
 centre, which draws a vertical stroke; the trailing `null` breaks the line so
 consecutive events do not join up. `stroke_width` sets how thick the tick is,
 and `± 0.34` how tall.
+
+The lanes sit on integers 1–5, so the axis runs `0` to `6` with `tickAmount: 6`
+to land a tick — and therefore a label — on each lane centre instead of on the
+boundary between two. ApexCharts draws gridlines at those same ticks, which
+would then run straight through the strokes, so `grid.yaxis.lines` is off and
+the separators are `annotations` at the half values. Labels and separators are
+positioned independently that way, and neither drags the other when the axis or
+the chart height changes.
 
 ### Steps against goal
 
