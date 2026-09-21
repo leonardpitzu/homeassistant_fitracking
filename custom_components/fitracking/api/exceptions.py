@@ -15,3 +15,7 @@ class FiAuthError(FiError):
 
 class FiConnectionError(FiError):
     """Fi could not be reached, or answered with something unusable."""
+
+
+class FiTransientError(FiConnectionError):
+    """Fi answered with a status that is worth trying again straight away."""

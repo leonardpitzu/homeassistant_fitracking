@@ -328,14 +328,17 @@ class Pet:
         pet_id = raw.get("id")
         if not pet_id:
             return None
+        pet = cls(pet_id=pet_id, name="")
+        pet.apply_profile(raw)
+        return pet
+
+    def apply_profile(self, raw: dict) -> None:
+        """Refresh the household-level fields, leaving the detail ones alone."""
         photos = ((raw.get("photos") or {}).get("first") or {}).get("image") or {}
-        return cls(
-            pet_id=pet_id,
-            name=raw.get("name") or "Unknown",
-            breed=(raw.get("breed") or {}).get("name"),
-            photo_url=photos.get("fullSize"),
-            device=Device.parse(raw.get("device")),
-        )
+        self.name = raw.get("name") or "Unknown"
+        self.breed = (raw.get("breed") or {}).get("name")
+        self.photo_url = photos.get("fullSize")
+        self.device = Device.parse(raw.get("device"))
 
     def apply_detail(self, data: dict | None, midnight: datetime) -> None:
         """Merge one PET_DETAIL response into this pet."""

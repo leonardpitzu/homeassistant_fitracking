@@ -85,7 +85,7 @@ class FiDataUpdateCoordinator(DataUpdateCoordinator[FiData]):
 
     async def _async_update_data(self) -> FiData:
         try:
-            return await self.client.async_get_data(dt_util.start_of_local_day())
+            return await self.client.async_get_data(dt_util.start_of_local_day(), self.data)
         except FiAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except FiConnectionError as err:

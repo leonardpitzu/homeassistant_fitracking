@@ -174,6 +174,13 @@ Add the integration from **Settings → Devices & Services → Add Integration �
 
 The polling rate can be changed later from the integration's **Configure** dialog; the entry reloads automatically so the new value takes effect immediately.
 
+Fi's gateway answers `502` in short bursts, so a request that fails on a
+retryable status is tried twice more, half a second and then two seconds later,
+before the refresh is called a failure. A pet whose detail request fails anyway
+keeps the values from its last good refresh rather than blanking them — a failed
+fetch is not the same thing as Fi reporting nothing, and only the latter should
+read `unknown`.
+
 An active Fi membership is required — the collar reports nothing without one.
 
 ## Dashboard
@@ -636,6 +643,7 @@ Bluetooth range.
 | Behaviour sensors added | Barking, eating, drinking, licking and scratching are in Fi's API but absent from `pytryfi` |
 | `Day Phase` and `Active` added | Fi's `getPetBehaviorDetail` places rest and activity against the day, and `ActivitySummary` carries an active-time total; `pytryfi` queries neither |
 | `Connected To` reads as English | Upstream surfaced Fi's raw GraphQL `__typename`, so dashboards showed `ConnectedToUser`; it is now a translated enum |
+| Transient Fi failures ridden out | A single `502` from Fi's gateway took every entity to `unavailable`, and a failed pet request blanked every statistic to `unknown` |
 
 ## Credits
 
