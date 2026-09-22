@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.fitracking import STALE_GRACE
+from custom_components.fitracking.api.exceptions import FiConnectionError
 from custom_components.fitracking.api.models import Base, Device, FiData, LedColor, Pet, Stats
 from custom_components.fitracking.const import DOMAIN
 
@@ -108,6 +110,33 @@ async def test_tracker_reports_position(hass, mock_client):
     state = hass.states.get("device_tracker.scottie_tracker")
     assert state.attributes["latitude"] == 45.65
     assert state.attributes["longitude"] == 25.6
+
+
+async def test_a_brief_outage_keeps_the_last_good_state(hass, mock_client):
+    """Fi's gateway 502s for tens of seconds; entities should ride that out."""
+    entry = await _setup(hass)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+
+    mock_client.async_get_data.side_effect = FiConnectionError("Fi returned HTTP 502")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert coordinator.last_update_success
+    assert hass.states.get("sensor.scottie_collar_battery_level").state == "77"
+
+
+async def test_a_sustained_outage_still_goes_unavailable(hass, mock_client):
+    """The grace is a window, not a mute button."""
+    entry = await _setup(hass)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator._last_success -= STALE_GRACE
+
+    mock_client.async_get_data.side_effect = FiConnectionError("Fi returned HTTP 502")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert not coordinator.last_update_success
+    assert hass.states.get("sensor.scottie_collar_battery_level").state == "unavailable"
 
 
 async def test_behavior_sensor_counts_events(hass, mock_client):

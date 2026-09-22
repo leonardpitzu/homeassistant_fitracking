@@ -112,6 +112,23 @@ async def test_an_unknown_pet_starts_empty():
     assert data.pets[0].stats == {}
 
 
+async def test_a_null_pet_beside_errors_keeps_the_previous_statistics():
+    """Fi answers 200 with errors and a null pet; that is a failed refresh.
+
+    It used to fall through as success, so the pet was re-parsed from an empty
+    payload and every statistic read `unknown` -- with nothing above DEBUG to
+    say why.
+    """
+    previous_pet = Pet.parse_profile({"id": "p1", "name": "Scottie"})
+    previous_pet.apply_detail({"pet": {"dailyActivity": {"totalSteps": 1234}}}, MIDNIGHT)
+
+    partial = (200, {"data": {"pet": None}, "errors": [{"message": "internal error"}]})
+    client, _ = _client([(200, {"data": HOUSEHOLD}), partial])
+    data = await client.async_get_data(MIDNIGHT, FiData(pets=[previous_pet]))
+
+    assert data.pets[0].stats["DAILY"].steps == 1234
+
+
 async def test_the_profile_is_refreshed_on_a_carried_pet():
     """Carrying the pet forward must not freeze its name or collar state."""
     previous_pet = Pet.parse_profile({"id": "p1", "name": "Old Name"})

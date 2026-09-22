@@ -1,7 +1,7 @@
 """The Fi Tracking integration."""
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -25,6 +25,11 @@ LOGGER = logging.getLogger(__name__)
 
 # Setup is config-entry only; async_setup_entry seeds hass.data itself.
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+# Fi's gateway 502s in bursts of 10-40 seconds. Blanking every entity for that
+# long is worse than holding values the collar itself only revises once a
+# minute, so a brief outage keeps the last good data instead.
+STALE_GRACE = timedelta(minutes=2)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -76,6 +81,7 @@ class FiDataUpdateCoordinator(DataUpdateCoordinator[FiData]):
 
     def __init__(self, hass: HomeAssistant, client: FiClient, polling_rate: int) -> None:
         self.client = client
+        self._last_success: datetime | None = None
         super().__init__(
             hass,
             LOGGER,
@@ -85,8 +91,23 @@ class FiDataUpdateCoordinator(DataUpdateCoordinator[FiData]):
 
     async def _async_update_data(self) -> FiData:
         try:
-            return await self.client.async_get_data(dt_util.start_of_local_day(), self.data)
+            data = await self.client.async_get_data(dt_util.start_of_local_day(), self.data)
         except FiAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except FiConnectionError as err:
+            if self._within_grace():
+                LOGGER.debug("Fi unreachable, keeping the last good data: %s", err)
+                return self.data
             raise UpdateFailed(str(err)) from err
+        self._last_success = dt_util.utcnow()
+        return data
+
+    def _within_grace(self) -> bool:
+        """Whether a fresh-enough refresh exists to stand in for a failed one.
+
+        Measured in time rather than in failed attempts so the polling rate
+        cannot change how stale the data is allowed to get.
+        """
+        if self.data is None or self._last_success is None:
+            return False
+        return dt_util.utcnow() - self._last_success < STALE_GRACE

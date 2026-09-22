@@ -148,6 +148,10 @@ class FiClient:
 
     async def _async_pet_detail(self, pet: Pet, midnight: datetime, nights: dict[str, str]) -> None:
         data = await self._async_graphql(queries.PET_DETAIL, {"petId": pet.pet_id} | nights)
+        # Fi can answer with errors alongside a null pet. That is a failed
+        # refresh, not a pet with nothing to report.
+        if not data.get("pet"):
+            raise FiConnectionError("Fi returned no detail for this pet")
         pet.apply_detail(data, midnight)
 
     async def async_set_led(self, module_id: str, enabled: bool) -> None:
