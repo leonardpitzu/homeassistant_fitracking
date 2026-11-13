@@ -30,6 +30,19 @@ class FiPetTracker(FiPetEntity, TrackerEntity):
     _attr_source_type = SourceType.GPS
 
     @property
+    def force_update(self) -> bool:
+        """Write the fix only when it changed.
+
+        TrackerEntity forces every write of a non-polling entity, and it does
+        so in a property that ignores `_attr_force_update`, so it has to be
+        overridden here. Forced, every poll was a recorder row and reset
+        `last_changed`, which broke `for:` durations. A new position still
+        differs in latitude or longitude and is written as usual; a repeat
+        only moves `last_reported`.
+        """
+        return False
+
+    @property
     def name(self):
         return f"{self.pet.name} Tracker"
 

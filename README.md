@@ -12,6 +12,12 @@ A custom [Home Assistant](https://www.home-assistant.io/) integration for [Fi](h
 
 A `device_tracker` entity per pet, fed by the collar's reported GPS fix, so the pet appears on the map and can back a `person` entity.
 
+A poll that brings back the same fix is not written again. Home Assistant forces
+every write of a tracker that is not polled, which made each poll a new recorder
+row and reset `last_changed` every few seconds, so a `for:` duration on the
+tracker could never be met. A new position is still written as usual, so walks
+keep their full detail at any polling rate; a repeat only moves `last_reported`.
+
 ### Sensors
 
 Activity and rest statistics are created for every combination of period (`daily`, `weekly`, `monthly`) and metric:

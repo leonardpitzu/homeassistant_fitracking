@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.const import EVENT_STATE_CHANGED
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_capture_events
 
 from custom_components.fitracking import STALE_GRACE
 from custom_components.fitracking.api.exceptions import FiConnectionError
@@ -110,6 +111,44 @@ async def test_tracker_reports_position(hass, mock_client):
     state = hass.states.get("device_tracker.scottie_tracker")
     assert state.attributes["latitude"] == 45.65
     assert state.attributes["longitude"] == 25.6
+
+
+async def test_an_unchanged_fix_is_not_written_again(hass, mock_client):
+    """TrackerEntity forces every write; a repeated fix must not become a row."""
+    entry = await _setup(hass)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    before = hass.states.get("device_tracker.scottie_tracker")
+    # A repeat mutates last_reported on the very same State object.
+    reported_before = before.last_reported
+    events = async_capture_events(hass, EVENT_STATE_CHANGED)
+
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    after = hass.states.get("device_tracker.scottie_tracker")
+    assert not [event for event in events if event.data["entity_id"] == after.entity_id]
+    assert after.last_changed == before.last_changed
+    assert after.last_reported > reported_before
+
+
+async def test_a_new_fix_is_written_without_resetting_last_changed(hass, mock_client):
+    """Same zone, new position: a row for the move, but not a fresh last_changed."""
+    entry = await _setup(hass)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    before = hass.states.get("device_tracker.scottie_tracker")
+    events = async_capture_events(hass, EVENT_STATE_CHANGED)
+
+    moved = _fi_data()
+    moved.pets[0].latitude = 45.66
+    mock_client.async_get_data.return_value = moved
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    after = hass.states.get("device_tracker.scottie_tracker")
+    assert [event for event in events if event.data["entity_id"] == after.entity_id]
+    assert after.attributes["latitude"] == 45.66
+    assert after.state == before.state
+    assert after.last_changed == before.last_changed
 
 
 async def test_a_brief_outage_keeps_the_last_good_state(hass, mock_client):
