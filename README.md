@@ -650,6 +650,7 @@ Bluetooth range.
 | `Day Phase` and `Active` added | Fi's `getPetBehaviorDetail` places rest and activity against the day, and `ActivitySummary` carries an active-time total; `pytryfi` queries neither |
 | `Connected To` reads as English | Upstream surfaced Fi's raw GraphQL `__typename`, so dashboards showed `ConnectedToUser`; it is now a translated enum |
 | Transient Fi failures ridden out | A single `502` from Fi's gateway took every entity to `unavailable`, and a failed pet request blanked every statistic to `unknown` |
+| Tracker written only when the fix changes | `TrackerEntity` forces every write of a non-polling entity, so each poll was a recorder row and `last_changed` never aged past the polling interval |
 
 ## Credits
 
