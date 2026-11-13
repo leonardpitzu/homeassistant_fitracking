@@ -13,6 +13,7 @@ from custom_components.fitracking.api.models import (
     DAY_MINUTES,
     PHASE_ACTIVE,
     PHASE_DAY_SLEEP,
+    PHASE_IDLE,
     PHASE_NIGHT_SLEEP,
     PHASE_NO_DATA,
     PHASE_OFFLINE,
@@ -352,6 +353,35 @@ class TestDayPhases:
     def test_a_padded_and_an_unpadded_answer_build_the_same_bar(self):
         """Fi alternates the two within seconds; each switch was a recorder row."""
         assert self._two_am(132).day_segments == self._two_am(143).day_segments
+
+    def _rest_until(self, rest_end, activity_end, now_min):
+        """A night in progress whose rest bar reached `rest_end`, the activity bar `activity_end`."""
+        return self._pet_with(
+            rest=_timeline(_interval("EVENT", 0, rest_end)),
+            activity=_timeline(_interval("NOTHING", 0, activity_end)),
+            lastNight=UNAVAILABLE,
+            now=MIDNIGHT + timedelta(minutes=now_min, seconds=1),
+        )
+
+    def test_a_rest_bar_a_minute_behind_is_not_a_stir(self):
+        """Fi moves the activity bar on ~10 s before the rest bar.
+
+        For that one poll a rest still running ended a minute short, and the
+        new minute read as idle: 206 one-poll blips in 30 days.
+        """
+        segments = self._rest_until(28, 29, 29).day_segments
+        assert [(item.phase, item.start_min, item.minutes) for item in segments] == [
+            (PHASE_NIGHT_SLEEP, 0, 28),
+            (PHASE_NO_DATA, 28, DAY_MINUTES - 28),
+        ]
+
+    def test_a_dog_that_got_up_shows_a_minute_later(self):
+        """Holding the newest minute back delays a real stir; it does not hide it."""
+        segments = self._rest_until(28, 30, 30).day_segments
+        assert [(item.phase, item.start_min, item.minutes) for item in segments][:2] == [
+            (PHASE_NIGHT_SLEEP, 0, 28),
+            (PHASE_IDLE, 28, 2),
+        ]
 
     def test_padding_cannot_paint_past_now_either(self):
         """A padded stub must not reach into minutes that have not happened."""

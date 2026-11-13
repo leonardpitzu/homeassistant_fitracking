@@ -296,6 +296,16 @@ def build_day_phases(
         return ()
     spans = [span for item in rest + activity if (span := _span(item)) is not None]
     reported = min(max((end for _, end in spans), default=0), max(0, now_min))
+    # Fi moves the activity bar on to a new minute some seconds before the rest
+    # bar, so for one poll a rest still running ends a minute short and that
+    # minute reads as a stir. It waits for the rest bar; a dog that really got
+    # up shows one minute later.
+    rest_end = max(
+        (span[1] for item in rest if item.get("intervalType") == "EVENT" and (span := _span(item)) is not None),
+        default=None,
+    )
+    if rest_end is not None and reported == rest_end + 1:
+        reported = rest_end
 
     grid = [PHASE_NO_DATA] * DAY_MINUTES
     grid[:reported] = [PHASE_IDLE] * reported

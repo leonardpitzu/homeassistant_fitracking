@@ -104,7 +104,10 @@ placements, not measurements. The bar mirrors what the Fi app draws; the `Active
 stat sensor carries Fi's own figure. The same stretching reaches past the present
 — an ongoing rest can come back padded up to ~12 minutes into the future, and Fi
 alternates padded and unpadded answers within seconds — so the bar stops at the
-present: anything later is `no_data`.
+present: anything later is `no_data`. The newest minute also waits for the rest
+bar: Fi moves the activity bar on to a new minute about ten seconds earlier, which
+would otherwise show a rest still running as a one-minute stir. A dog that really
+got up shows a minute later instead.
 
 A day is night, day, next night, and a night always straddles two bars: its
 evening hours belong to the day it began, its remaining hours to the next one.
