@@ -152,7 +152,7 @@ class FiClient:
         # refresh, not a pet with nothing to report.
         if not data.get("pet"):
             raise FiConnectionError("Fi returned no detail for this pet")
-        pet.apply_detail(data, midnight)
+        pet.apply_detail(data, midnight, datetime.now(UTC))
 
     async def async_set_led(self, module_id: str, enabled: bool) -> None:
         await self._async_graphql(

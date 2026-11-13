@@ -25,6 +25,8 @@ from custom_components.fitracking.api.models import (
 # Aware, like dt_util.start_of_local_day(): Fi's timestamps are aware too, and
 # the day timeline is built by subtracting the two.
 MIDNIGHT = datetime(2026, 9, 19, tzinfo=UTC)
+# Late enough that every fixture below lies in the past.
+NOW = MIDNIGHT + timedelta(hours=23, minutes=59)
 
 
 def _rest(sleep=None, nap=None, *, empty=False):
@@ -46,13 +48,13 @@ def _detail(**overrides):
     return payload
 
 
-def _pet(detail=None, trends=None, **root):
+def _pet(detail=None, trends=None, now=NOW, **root):
     pet = Pet.parse_profile({"id": "p1", "name": "Scottie", "breed": {"name": "Corgi"}})
     payload = {
         "pet": detail if detail is not None else _detail(),
         "getPetHealthTrendsForPet": trends,
     }
-    pet.apply_detail(payload | root, MIDNIGHT)
+    pet.apply_detail(payload | root, MIDNIGHT, now)
     return pet
 
 
@@ -110,6 +112,8 @@ def _overnight(seconds, *, start="2026-09-18T20:15:00.000Z", end="2026-09-19T06:
 
 
 UNAVAILABLE = {"__typename": "UnavailableOvernightRestSummary"}
+# The night before last, settled the morning before MIDNIGHT.
+PRIOR_NIGHT = _overnight(39823, start="2026-09-17T20:15:00.000Z", end="2026-09-18T06:00:00.000Z")
 
 
 def test_overnight_unavailable_is_none():
@@ -133,6 +137,37 @@ def test_overnight_falls_back_while_the_current_night_runs():
 def test_overnight_prefers_the_newer_night():
     pet = _pet(_detail(lastNight=_overnight(40306), priorNight=_overnight(58982)))
     assert pet.last_night_sleep_s == 40306
+
+
+def test_a_night_whose_end_follows_the_collar_is_still_running():
+    """Fi reports the night in progress with sleepEnd at the latest upload.
+
+    Read as settled, `Last Night Sleep` showed tonight's partial total all
+    night, growing every minute, instead of the last night that had ended.
+    """
+    now = MIDNIGHT + timedelta(hours=2, minutes=12, seconds=26)
+    running = _overnight(20000, start="2026-09-18T20:38:00.000Z", end="2026-09-19T02:12:15.000Z")
+    pet = _pet(_detail(lastNight=running, priorNight=PRIOR_NIGHT), now=now)
+    assert pet.night_in_progress
+    assert pet.last_night_sleep_s == 39823
+
+
+def test_a_night_is_settled_once_its_end_stops_moving():
+    now = MIDNIGHT + timedelta(hours=8)
+    woke = _overnight(40306, start="2026-09-18T20:38:00.000Z", end="2026-09-19T07:43:56.000Z")
+    pet = _pet(_detail(lastNight=woke, priorNight=PRIOR_NIGHT), now=now)
+    assert not pet.night_in_progress
+    assert pet.last_night_sleep_s == 40306
+    assert pet.last_night_end == datetime(2026, 9, 19, 7, 43, 56, tzinfo=UTC)
+
+
+def test_a_brief_stir_on_waking_does_not_settle_the_night():
+    """Fi's end stands still while the dog stirs; under the tolerance it is still night."""
+    now = MIDNIGHT + timedelta(hours=7, minutes=50)
+    stirring = _overnight(40306, start="2026-09-18T20:38:00.000Z", end="2026-09-19T07:43:56.000Z")
+    pet = _pet(_detail(lastNight=stirring, priorNight=PRIOR_NIGHT), now=now)
+    assert pet.night_in_progress
+    assert pet.last_night_sleep_s == 39823
 
 
 def test_ongoing_rest_records_when_it_started():
@@ -221,9 +256,10 @@ def _interval(kind, start_min, minutes):
 class TestDayPhases:
     """The 1440-minute bar: every minute of the local day gets exactly one phase."""
 
-    def _pet_with(self, rest=None, activity=None, **overrides):
+    def _pet_with(self, rest=None, activity=None, now=NOW, **overrides):
         return _pet(
             _detail(**overrides),
+            now=now,
             restTimeline=rest,
             activityTimeline=activity,
         )
@@ -291,6 +327,43 @@ class TestDayPhases:
             priorNight=_overnight(40306, start="2026-09-17T21:19:00.000Z", end="2026-09-18T05:33:00.000Z"),
         )
         assert [(item.phase, item.minutes) for item in pet.day_segments][0] == (PHASE_NIGHT_SLEEP, 180)
+
+    def _two_am(self, rest_minutes):
+        """02:12:26, inside a night Fi reports with its end at the 02:12:15 upload."""
+        return self._pet_with(
+            rest=_timeline(_interval("EVENT", 0, rest_minutes)),
+            lastNight=_overnight(20000, start="2026-09-18T20:38:00.000Z", end="2026-09-19T02:12:15.000Z"),
+            priorNight=_overnight(40306, start="2026-09-17T21:19:00.000Z", end="2026-09-18T05:33:00.000Z"),
+            now=MIDNIGHT + timedelta(hours=2, minutes=12, seconds=26),
+        )
+
+    def test_a_night_reported_with_a_moving_end_is_all_night_sleep(self):
+        """The running night used to be cut at its provisional end, and Fi's
+        padding past it read as day sleep: the state flipped every minute."""
+        segments = self._two_am(143).day_segments
+        assert [(item.phase, item.minutes) for item in segments][0] == (PHASE_NIGHT_SLEEP, 132)
+        assert all(item.phase != PHASE_DAY_SLEEP for item in segments)
+
+    def test_nothing_after_now_is_reported(self):
+        """Fi pads the ongoing rest to its render width, minutes into the future."""
+        tail = self._two_am(143).day_segments[-1]
+        assert (tail.phase, tail.start_min) == (PHASE_NO_DATA, 132)
+
+    def test_a_padded_and_an_unpadded_answer_build_the_same_bar(self):
+        """Fi alternates the two within seconds; each switch was a recorder row."""
+        assert self._two_am(132).day_segments == self._two_am(143).day_segments
+
+    def test_padding_cannot_paint_past_now_either(self):
+        """A padded stub must not reach into minutes that have not happened."""
+        pet = self._pet_with(
+            rest=_timeline(_interval("EVENT", 0, 100)),
+            activity=_timeline(_interval("EVENT", 100, 12)),
+            now=MIDNIGHT + timedelta(minutes=105),
+        )
+        assert [(item.phase, item.start_min, item.minutes) for item in pet.day_segments][-2:] == [
+            (PHASE_ACTIVE, 100, 5),
+            (PHASE_NO_DATA, 105, DAY_MINUTES - 105),
+        ]
 
     def test_a_night_fi_never_reported_is_not_assumed_to_be_running(self):
         """Absent is not the same as unsettled; only Unavailable means in progress."""
@@ -382,17 +455,17 @@ class TestBehaviorTrends:
 
     def test_only_event_intervals_are_kept(self):
         """NOTHING intervals are the gaps between events, not events."""
-        events = parse_behavior_trends(self.PAYLOAD, MIDNIGHT)
+        events = parse_behavior_trends(self.PAYLOAD, MIDNIGHT, NOW)
         assert len(events["eating"]) == 1
         assert len(events["cleaning_self"]) == 2
 
     def test_offsets_are_seconds_since_local_midnight(self):
-        events = parse_behavior_trends(self.PAYLOAD, MIDNIGHT)
+        events = parse_behavior_trends(self.PAYLOAD, MIDNIGHT, NOW)
         assert events["eating"][0] == datetime(2026, 9, 19, 1, 27, 28, tzinfo=UTC)
 
     def test_key_strips_the_period_suffix(self):
         """Fi ids look like "cleaning_self:DAY"; the sensor keys on the stem."""
-        assert set(parse_behavior_trends(self.PAYLOAD, MIDNIGHT)) == {
+        assert set(parse_behavior_trends(self.PAYLOAD, MIDNIGHT, NOW)) == {
             "eating",
             "cleaning_self",
             "barking",
@@ -400,8 +473,40 @@ class TestBehaviorTrends:
 
     def test_no_events_is_empty_not_missing(self):
         """A quiet behaviour must still report, so the sensor reads 0 not None."""
-        assert parse_behavior_trends(self.PAYLOAD, MIDNIGHT)["barking"] == []
+        assert parse_behavior_trends(self.PAYLOAD, MIDNIGHT, NOW)["barking"] == []
 
     @pytest.mark.parametrize("payload", [None, {}, {"behaviorTrends": None}])
     def test_empty_response_does_not_raise(self, payload):
-        assert parse_behavior_trends(payload, MIDNIGHT) == {}
+        assert parse_behavior_trends(payload, MIDNIGHT, NOW) == {}
+
+    def test_events_are_in_time_order(self):
+        """Fi's order varies between answers; each reshuffle was a recorder row."""
+        payload = {
+            "behaviorTrends": [
+                {
+                    "id": "cleaning_self:DAY",
+                    "chart": {
+                        "intervals": [
+                            {"intervalType": "EVENT", "offset": 5510},
+                            {"intervalType": "EVENT", "offset": 5392},
+                        ]
+                    },
+                },
+            ]
+        }
+        events = parse_behavior_trends(payload, MIDNIGHT, NOW)["cleaning_self"]
+        assert events == sorted(events)
+
+    def test_yesterdays_chart_just_after_midnight_is_not_today(self):
+        """For a few minutes Fi still serves yesterday's DAY chart.
+
+        Its offsets landed later today, so every sensor briefly read
+        yesterday's count -- the very value the README says to chart as the
+        daily max.
+        """
+        events = parse_behavior_trends(self.PAYLOAD, MIDNIGHT, MIDNIGHT + timedelta(seconds=11))
+        assert events == {"eating": [], "cleaning_self": [], "barking": []}
+
+    def test_an_event_moments_ago_is_kept(self):
+        just_after = MIDNIGHT + timedelta(seconds=5510, minutes=1)
+        assert len(parse_behavior_trends(self.PAYLOAD, MIDNIGHT, just_after)["cleaning_self"]) == 2

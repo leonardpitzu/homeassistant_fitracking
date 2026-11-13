@@ -94,6 +94,7 @@ async def test_a_failed_detail_keeps_the_previous_statistics():
     previous_pet.apply_detail(
         {"pet": {"dailyActivity": {"totalSteps": 1234, "stepGoal": 16000}}},
         MIDNIGHT,
+        MIDNIGHT,
     )
     assert previous_pet.stats["DAILY"].steps == 1234
 
@@ -120,7 +121,7 @@ async def test_a_null_pet_beside_errors_keeps_the_previous_statistics():
     say why.
     """
     previous_pet = Pet.parse_profile({"id": "p1", "name": "Scottie"})
-    previous_pet.apply_detail({"pet": {"dailyActivity": {"totalSteps": 1234}}}, MIDNIGHT)
+    previous_pet.apply_detail({"pet": {"dailyActivity": {"totalSteps": 1234}}}, MIDNIGHT, MIDNIGHT)
 
     partial = (200, {"data": {"pet": None}, "errors": [{"message": "internal error"}]})
     client, _ = _client([(200, {"data": HOUSEHOLD}), partial])

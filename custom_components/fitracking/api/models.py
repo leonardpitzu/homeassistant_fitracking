@@ -44,6 +44,15 @@ PHASES = (
 NIGHT_BEDTIME_MARGIN = 120
 NIGHT_GAP_TOLERANCE = 15
 
+# Fi reports the night in progress with sleepEnd at the collar's latest upload,
+# so a night is over only once its end has stood still. Shorter than this is a
+# stir, the same one the evening night is allowed to contain.
+NIGHT_SETTLED_AFTER = timedelta(minutes=NIGHT_GAP_TOLERANCE)
+
+# Behaviour events are stamped by the collar, so one from the future is not a
+# clock drift of seconds but a chart from another day.
+BEHAVIOR_CLOCK_LEEWAY = timedelta(minutes=5)
+
 
 def _as_int(value: object) -> int | None:
     if value is None or isinstance(value, bool):
@@ -72,9 +81,22 @@ def _as_datetime(value: object) -> datetime | None:
         return None
 
 
-def _is_settled(raw: dict | None) -> bool:
-    """Fi answers UnavailableOvernightRestSummary until a night has ended."""
+def _is_concrete(raw: dict | None) -> bool:
     return bool(raw) and raw.get("__typename") == "ConcreteOvernightRestSummary"
+
+
+def _is_settled(raw: dict | None, now: datetime) -> bool:
+    """Whether a summary describes a night that has ended.
+
+    An unfinished night comes back either as UnavailableOvernightRestSummary or
+    as a concrete summary whose sleepEnd follows the collar's latest upload,
+    from midnight until the dog gets up. Only an end that has stopped moving
+    marks the night as over.
+    """
+    if not _is_concrete(raw):
+        return False
+    end = _as_datetime(raw.get("sleepEnd"))
+    return end is None or now - end >= NIGHT_SETTLED_AFTER
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +275,7 @@ def build_day_phases(
     activity_raw: dict | None,
     night: tuple[int, int] | None,
     bedtime: int | None,
+    now_min: int,
 ) -> tuple[DaySegment, ...]:
     """Give every minute of the local day exactly one phase.
 
@@ -262,14 +285,17 @@ def build_day_phases(
     placement, not a duration -- Fi's own totals stay on the stat sensors.
 
     Minutes Fi has not reported on yet stay `no_data`, which is what lets the
-    phases add up to a full 1440 while the day is still running.
+    phases add up to a full 1440 while the day is still running. That includes
+    every minute from `now_min` on: the same stretching reaches up to ~12
+    minutes into the future, and Fi alternates between padded and unpadded
+    answers within seconds.
     """
     rest = _intervals(rest_raw)
     activity = _intervals(activity_raw)
     if not rest and not activity:
         return ()
     spans = [span for item in rest + activity if (span := _span(item)) is not None]
-    reported = max((end for _, end in spans), default=0)
+    reported = min(max((end for _, end in spans), default=0), max(0, now_min))
 
     grid = [PHASE_NO_DATA] * DAY_MINUTES
     grid[:reported] = [PHASE_IDLE] * reported
@@ -281,6 +307,9 @@ def build_day_phases(
     # Nothing is knowable while the collar is off, so this goes on last.
     _paint(grid, rest, "DEVICE_OFF", PHASE_OFFLINE)
     _paint(grid, activity, "DEVICE_OFF", PHASE_OFFLINE)
+    # Painting follows Fi's spans, padding and all; what lies past the last
+    # report has not happened yet.
+    grid[reported:] = [PHASE_NO_DATA] * (DAY_MINUTES - reported)
     return _collapse(grid)
 
 
@@ -340,8 +369,8 @@ class Pet:
         self.photo_url = photos.get("fullSize")
         self.device = Device.parse(raw.get("device"))
 
-    def apply_detail(self, data: dict | None, midnight: datetime) -> None:
-        """Merge one PET_DETAIL response into this pet."""
+    def apply_detail(self, data: dict | None, midnight: datetime, now: datetime) -> None:
+        """Merge one PET_DETAIL response into this pet, as of `now`."""
         data = data or {}
         pet_raw = data.get("pet") or {}
         self._apply_location(pet_raw.get("ongoingActivity"))
@@ -359,13 +388,14 @@ class Pet:
                 active_s=active_s,
             )
         self.stats = stats
-        self._apply_overnight(pet_raw.get("lastNight"), pet_raw.get("priorNight"))
-        self.behavior_events = parse_behavior_trends(data.get("getPetHealthTrendsForPet"), midnight)
+        self._apply_overnight(pet_raw.get("lastNight"), pet_raw.get("priorNight"), now)
+        self.behavior_events = parse_behavior_trends(data.get("getPetHealthTrendsForPet"), midnight, now)
         self.day_segments = build_day_phases(
             data.get("restTimeline"),
             data.get("activityTimeline"),
             self._night_window(midnight),
             self._bedtime(midnight),
+            int((now - midnight).total_seconds() // 60),
         )
 
     def _bedtime(self, midnight: datetime) -> int | None:
@@ -389,10 +419,10 @@ class Pet:
         The evening that began the night is always yesterday's bar; only what
         fell after local midnight is today's.
 
-        While Fi still answers Unavailable the dog is *in* that night, so every
-        minute of rest since midnight belongs to it -- the timeline stops at the
-        collar's last report anyway, so the open end cannot over-claim. Once the
-        night settles, sleepEnd bounds it exactly.
+        While the night is still running the dog is *in* it, so every minute of
+        rest since midnight belongs to it -- the timeline stops at the present
+        anyway, so the open end cannot over-claim. Once the night settles,
+        sleepEnd bounds it exactly.
         """
         if self.night_in_progress:
             return (0, DAY_MINUTES)
@@ -421,17 +451,18 @@ class Pet:
         self.place_name = place.get("name")
         self.place_address = place.get("address")
 
-    def _apply_overnight(self, last_night: dict | None, prior_night: dict | None) -> None:
+    def _apply_overnight(self, last_night: dict | None, prior_night: dict | None, now: datetime) -> None:
         """Take the newest settled night, and note when none of them has ended.
 
-        Fi answers UnavailableOvernightRestSummary for a night that has not
-        ended yet, so between local midnight and the moment the dog wakes the
-        newest candidate is still in progress and the one before it is the
-        night just finished.
+        Between local midnight and the moment the dog wakes, the newest
+        candidate is the night still in progress and the one before it is the
+        night just finished. Fi says so with UnavailableOvernightRestSummary or
+        with a concrete summary whose end is still moving; absent is neither.
         """
-        self.night_in_progress = (last_night or {}).get("__typename") == "UnavailableOvernightRestSummary"
+        unavailable = (last_night or {}).get("__typename") == "UnavailableOvernightRestSummary"
+        self.night_in_progress = unavailable or (_is_concrete(last_night) and not _is_settled(last_night, now))
         for raw in (last_night, prior_night):
-            if _is_settled(raw):
+            if _is_settled(raw, now):
                 self.last_night_sleep_s = _as_int(raw.get("sleepSeconds"))
                 self.last_night_start = _as_datetime(raw.get("sleepStart"))
                 self.last_night_end = _as_datetime(raw.get("sleepEnd"))
@@ -441,12 +472,16 @@ class Pet:
         self.last_night_end = None
 
 
-def parse_behavior_trends(raw: dict | None, midnight: datetime) -> dict[str, list[datetime]]:
-    """Return {behaviour key: event times} for today in local time.
+def parse_behavior_trends(raw: dict | None, midnight: datetime, now: datetime) -> dict[str, list[datetime]]:
+    """Return {behaviour key: event times} for today in local time, oldest first.
 
     Offsets are seconds since local midnight. An EVENT's `length` is a fixed
     render width (always 700s) and events can overlap, so it is not a duration
     and is deliberately not requested.
+
+    For a few minutes after midnight Fi still serves yesterday's chart, which
+    these offsets would date to later today. A chart with an event after `now`
+    is therefore not today's, and today has no events yet.
     """
     events: dict[str, list[datetime]] = {}
     for trend in (raw or {}).get("behaviorTrends") or []:
@@ -454,11 +489,14 @@ def parse_behavior_trends(raw: dict | None, midnight: datetime) -> dict[str, lis
         if not key:
             continue
         intervals = (trend.get("chart") or {}).get("intervals") or []
-        events[key] = [
+        events[key] = sorted(
             midnight + timedelta(seconds=interval["offset"])
             for interval in intervals
             if interval.get("intervalType") == "EVENT" and interval.get("offset") is not None
-        ]
+        )
+    latest = max((times[-1] for times in events.values() if times), default=None)
+    if latest is not None and latest > now + BEHAVIOR_CLOCK_LEEWAY:
+        return {key: [] for key in events}
     return events
 
 

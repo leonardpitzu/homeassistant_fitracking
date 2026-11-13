@@ -58,7 +58,15 @@ Two sensors cover what a calendar period cannot say on its own:
 
 | Sensor | Meaning |
 |---|---|
-| `Last Night Sleep` | The night as one unbroken session, uncut by midnight — Fi's settled overnight total. Keyed by the evening the night began, so the integration asks Fi for both candidate evenings and reports the most recent one that has finished. `unknown` only when neither has, with `sleep_start` / `sleep_end` attributes. |
+| `Last Night Sleep` | The night as one unbroken session, uncut by midnight — Fi's settled overnight total. Keyed by the evening the night began, so the integration asks Fi for both candidate evenings and reports the most recent one that has finished. `unknown` only when neither has, with `sleep_start` / `sleep_end` attributes. All three values are Fi's own, unaltered. |
+
+From midnight until the dog wakes, Fi reports the night in progress as if it were
+finished, with `sleepEnd` following the collar's latest upload and the total
+growing with it. That is not last night, so it is not shown: the night counts as
+finished once Fi's `sleepEnd` has stood still for 15 minutes, and until then the
+sensor keeps the night before. On waking, Fi trims the end back by a few seconds
+and never moves it again, so the switch happens about a quarter of an hour after
+the dog gets up, and it shows Fi's final figures.
 | `Resting Since` | Timestamp Fi's current `OngoingRest` began, or `unknown` while the pet is on a walk. Fi means "settled at a place" here, not "asleep", so this keeps running after the dog wakes up. |
 
 ### Day Phase — the whole day as 1440 minutes
@@ -93,13 +101,17 @@ segments:
 Fi stretches any event shorter than its minimum render width to that width, so
 short slices — the three-minute `active` stubs either side of a long rest — are
 placements, not measurements. The bar mirrors what the Fi app draws; the `Active`
-stat sensor carries Fi's own figure.
+stat sensor carries Fi's own figure. The same stretching reaches past the present
+— an ongoing rest can come back padded up to ~12 minutes into the future, and Fi
+alternates padded and unpadded answers within seconds — so the bar stops at the
+present: anything later is `no_data`.
 
 A day is night, day, next night, and a night always straddles two bars: its
 evening hours belong to the day it began, its remaining hours to the next one.
 The two ends are recognised differently. The morning one is Fi's own — bounded by
-the settled session's `sleepEnd`, or left open while Fi still answers
-`Unavailable`, which is Fi saying the dog is *in* that night. The evening one
+the settled session's `sleepEnd`, or left open while the dog is still *in* that
+night: Fi answers `Unavailable`, or keeps moving `sleepEnd` with every upload (see
+`Last Night Sleep` above). The evening one
 cannot be, because Fi does not settle a night until the morning after, so it is
 read off the bar instead: rest still running at the collar's last report, begun
 no earlier than two hours before the dog went to bed last time, is the night
@@ -131,8 +143,8 @@ events:
 | Licking | `cleaning_self` | `mdi:emoticon-tongue-outline` |
 | Scratching | `scratching` | `mdi:hand-back-right` |
 
-Each carries the individual event times as attributes, so a chart can rebuild the
-whole day without waiting on recorder history:
+Each carries the individual event times as attributes, oldest first, so a chart
+can rebuild the whole day without waiting on recorder history:
 
 ```yaml
 events: ["2026-09-19T01:27:28+03:00", "2026-09-19T01:29:52+03:00"]
@@ -141,7 +153,10 @@ last_event: "2026-09-19T01:29:52+03:00"
 
 The counts reset at local midnight and use `measurement` for the same reason as
 the activity statistics above. They are fetched directly from Fi's
-`getPetHealthTrendsForPet` query.
+`getPetHealthTrendsForPet` query. For a few minutes after midnight Fi still
+serves yesterday's chart, which would date yesterday's events to later today and
+start each day's `max` at yesterday's total; a chart holding an event later than
+now is therefore read as no events yet.
 
 ### Binary sensor
 
