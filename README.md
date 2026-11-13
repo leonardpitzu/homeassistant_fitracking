@@ -412,7 +412,7 @@ series:
     stroke_width: 2
     data_generator: |
       const y = 5;
-      const out = [];
+      const out = [[new Date(start).getTime(), null]];
       (entity.attributes.events || []).forEach(t => {
         const x = new Date(t).getTime();
         out.push([x, y - 0.34]);
@@ -426,7 +426,7 @@ series:
     stroke_width: 2
     data_generator: |
       const y = 4;
-      const out = [];
+      const out = [[new Date(start).getTime(), null]];
       (entity.attributes.events || []).forEach(t => {
         const x = new Date(t).getTime();
         out.push([x, y - 0.34]);
@@ -440,7 +440,7 @@ series:
     stroke_width: 2
     data_generator: |
       const y = 3;
-      const out = [];
+      const out = [[new Date(start).getTime(), null]];
       (entity.attributes.events || []).forEach(t => {
         const x = new Date(t).getTime();
         out.push([x, y - 0.34]);
@@ -454,7 +454,7 @@ series:
     stroke_width: 2
     data_generator: |
       const y = 2;
-      const out = [];
+      const out = [[new Date(start).getTime(), null]];
       (entity.attributes.events || []).forEach(t => {
         const x = new Date(t).getTime();
         out.push([x, y - 0.34]);
@@ -468,7 +468,7 @@ series:
     stroke_width: 2
     data_generator: |
       const y = 1;
-      const out = [];
+      const out = [[new Date(start).getTime(), null]];
       (entity.attributes.events || []).forEach(t => {
         const x = new Date(t).getTime();
         out.push([x, y - 0.34]);
@@ -482,6 +482,11 @@ Each event becomes two points at the same timestamp, one either side of the lane
 centre, which draws a vertical stroke; the trailing `null` breaks the line so
 consecutive events do not join up. `stroke_width` sets how thick the tick is,
 and `± 0.34` how tall.
+
+Every series starts with one `null` point at the start of the day. It draws
+nothing, but without it a day with no events yet — every night from midnight
+until the first one — leaves all five series empty, and apexcharts-card shows its
+no-data text, `Loading...`, in place of the chart for as long as that lasts.
 
 The lanes sit on integers 1–5, so the axis runs `0` to `6` with `tickAmount: 6`
 to land a tick — and therefore a label — on each lane centre instead of on the
