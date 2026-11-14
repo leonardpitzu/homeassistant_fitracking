@@ -12,6 +12,10 @@ PET_MODE_NORMAL = "NORMAL"
 PET_MODE_LOST = "LOST_DOG"
 ACTIVITY_ONGOING_WALK = "OngoingWalk"
 
+# The lastConnectionState members that mean the collar can reach Fi. Any other,
+# UnknownConnectivity or one Fi adds later, means it is out of reach.
+CONNECTED_STATES = frozenset({"ConnectedToBase", "ConnectedToUser", "ConnectedToCellular", "ConnectedToWifi"})
+
 _LED_FRAGMENT = """
 fragment LedColorDetails on LedColor {
   ledColorCode

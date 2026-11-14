@@ -6,6 +6,7 @@ import pytest
 from homeassistant.components.sensor import SensorStateClass
 
 from custom_components.fitracking.api.models import PERIODS, Stats
+from custom_components.fitracking.api.queries import CONNECTED_STATES
 from custom_components.fitracking.const import (
     CONNECTION_ICONS,
     CONNECTION_OFFLINE,
@@ -21,6 +22,11 @@ STATS_FIELDS = {field.name for field in fields(Stats)}
 def test_every_connection_state_has_an_icon():
     """The sensor's options are the icon keys, so a gap would break its icon."""
     assert set(CONNECTION_STATES.values()) | {CONNECTION_OFFLINE} == set(CONNECTION_ICONS)
+
+
+def test_the_sensor_and_the_night_agree_on_what_reachable_means():
+    """A transport the sensor names but the night ignores would hold nights open."""
+    assert set(CONNECTION_STATES) == CONNECTED_STATES
 
 
 def test_fi_typenames_are_not_the_state():

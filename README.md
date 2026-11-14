@@ -59,6 +59,7 @@ Two sensors cover what a calendar period cannot say on its own:
 | Sensor | Meaning |
 |---|---|
 | `Last Night Sleep` | The night as one unbroken session, uncut by midnight — Fi's settled overnight total. Keyed by the evening the night began, so the integration asks Fi for both candidate evenings and reports the most recent one that has finished. `unknown` only when neither has, with `sleep_start` / `sleep_end` attributes. All three values are Fi's own, unaltered. |
+| `Resting Since` | Timestamp Fi's current `OngoingRest` began, or `unknown` while the pet is on a walk. Fi means "settled at a place" here, not "asleep", so this keeps running after the dog wakes up. |
 
 From midnight until the dog wakes, Fi reports the night in progress as if it were
 finished, with `sleepEnd` following the collar's latest upload and the total
@@ -67,7 +68,16 @@ finished once Fi's `sleepEnd` has stood still for 15 minutes, and until then the
 sensor keeps the night before. On waking, Fi trims the end back by a few seconds
 and never moves it again, so the switch happens about a quarter of an hour after
 the dog gets up, and it shows Fi's final figures.
-| `Resting Since` | Timestamp Fi's current `OngoingRest` began, or `unknown` while the pet is on a walk. Fi means "settled at a place" here, not "asleep", so this keeps running after the dog wakes up. |
+
+The end also stands still when the collar cannot upload — out of range, switched
+off or flat — and that is not the dog getting up. So the 15 minutes only count
+while `Connected To` says the collar is reachable: they run from the end or from
+the collar coming back, whichever is later. A collar that has been reachable that
+long without Fi extending the night means the dog is up. One that goes quiet
+overnight leaves the night running until it is back and Fi has caught up, and a
+collar dropping out after a night has ended does not reopen it. A restart takes
+the collar to have been reachable all along, so a finished night is not held
+back — unless it is out of reach at that moment, and then the night waits for it.
 
 ### Day Phase — the whole day as 1440 minutes
 
@@ -646,7 +656,8 @@ no use on a dashboard, so the sensor is an enum with proper states:
 | `offline` | Offline | Out of reach, or on a transport Fi has not named before |
 
 A collar sitting on `cellular` while at home usually means the Base is out of
-Bluetooth range.
+Bluetooth range. While it reads `offline`, a night still running is not taken
+to have ended (see `Last Night Sleep`).
 
 ## Differences from upstream
 
