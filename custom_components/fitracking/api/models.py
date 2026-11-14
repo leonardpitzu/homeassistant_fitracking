@@ -9,10 +9,10 @@ rest behaviour for as long as it did.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from itertools import groupby
 
-from .queries import ACTIVITY_ONGOING_WALK, CONNECTED_STATES, PET_MODE_LOST
+from .queries import ACTIVITY_ONGOING_WALK, PET_MODE_LOST
 
 PERIODS = ("DAILY", "WEEKLY", "MONTHLY")
 
@@ -46,15 +46,13 @@ NIGHT_GAP_TOLERANCE = 15
 
 # Fi reports the night in progress with sleepEnd at the collar's latest upload,
 # so a night is over only once its end has stood still. Shorter than this is a
-# stir, the same one the evening night is allowed to contain. An end also stands
-# still while the collar cannot upload, so the time only counts while the
-# collar is reachable: then Fi would have moved the end had the night gone on.
+# stir, the same one the evening night is allowed to contain.
 NIGHT_SETTLED_AFTER = timedelta(minutes=NIGHT_GAP_TOLERANCE)
 
-# Before the first poll there is no telling when the collar was last out of
-# reach, so it is taken to have been reachable all along. Otherwise every
-# restart would hold back a night that ended hours ago.
-_REACHABLE_ALL_ALONG = datetime.min.replace(tzinfo=UTC)
+# An end also stands still while the collar cannot upload, and then Fi keeps
+# drawing rest up to the present. A dog that really got up shows on the rest
+# bar as at least this much time after the end that is not rest.
+UP_AFTER_NIGHT_SECONDS = 60
 
 # Behaviour events are stamped by the collar, so one from the future is not a
 # clock drift of seconds but a chart from another day.
@@ -98,13 +96,50 @@ def _is_settled(raw: dict | None, now: datetime) -> bool:
     An unfinished night comes back either as UnavailableOvernightRestSummary or
     as a concrete summary whose sleepEnd follows the collar's latest upload,
     from midnight until the dog gets up. Only an end that has stopped moving
-    can mark the night as over; for the newest night, `Pet._night_has_ended`
-    also asks whether the collar could have moved it.
+    can mark the night as over; for the newest night, `_got_up_after` also
+    asks whether the collar could have moved it.
     """
     if not _is_concrete(raw):
         return False
     end = _as_datetime(raw.get("sleepEnd"))
     return end is None or now - end >= NIGHT_SETTLED_AFTER
+
+
+def _got_up_after(raw: dict, rest_raw: dict | None, midnight: datetime, now: datetime) -> bool:
+    """Whether today's rest bar shows the dog up after the night's end.
+
+    Fi's end stops moving both when the dog gets up and when the collar cannot
+    upload -- out of range, switched off, flat, or back but not yet synced. In
+    the second case Fi keeps drawing rest up to the present, so only a stretch
+    after the end that is not rest -- awake, active, or the collar taken off --
+    shows the night is over. The padding Fi adds to the last rest can delay it
+    by a few minutes, never past the 15 the end has to stand still anyway.
+
+    Without a rest bar there is nothing to ask, and the end standing still is
+    taken at its word, as it always was.
+    """
+    end = _as_datetime(raw.get("sleepEnd"))
+    intervals = _intervals(rest_raw)
+    if end is None or not intervals:
+        return True
+    spans: list[tuple[str | None, float, float]] = []
+    for item in intervals:
+        offset = _as_float(item.get("offset"))
+        length = _as_float(item.get("length"))
+        if offset is not None and length is not None and length > 0:
+            spans.append((item.get("intervalType"), offset, offset + length))
+    # Fi's bar runs to the present, padded past it now and then.
+    horizon = min(max((stop for _, _, stop in spans), default=0.0), (now - midnight).total_seconds())
+    cursor = (end - midnight).total_seconds()
+    for start, stop in sorted((start, stop) for kind, start, stop in spans if kind == "EVENT"):
+        if stop <= cursor:
+            continue
+        if min(start, horizon) - cursor >= UP_AFTER_NIGHT_SECONDS:
+            return True
+        cursor = max(cursor, stop)
+        if cursor >= horizon:
+            return False
+    return horizon - cursor >= UP_AFTER_NIGHT_SECONDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,13 +174,6 @@ class Device:
     @property
     def is_lost(self) -> bool:
         return self.mode == PET_MODE_LOST
-
-    @property
-    def is_reachable(self) -> bool | None:
-        """Whether the collar can reach Fi, or None when Fi did not say."""
-        if self.connection_state_type is None:
-            return None
-        return self.connection_state_type in CONNECTED_STATES
 
     def led_on(self, now: datetime) -> bool:
         """Fi leaves ledEnabled true after auto-extinguishing the collar LED."""
@@ -372,12 +400,6 @@ class Pet:
     day_segments: tuple[DaySegment, ...] = ()
     stats: dict[str, Stats] = field(default_factory=dict)
     behavior_events: dict[str, list[datetime]] = field(default_factory=dict)
-    # Memory across polls, for telling a night that ended from a collar that
-    # went quiet. When the collar's current reachable run began, or None while
-    # it is out of reach.
-    _reachable_since: datetime | None = field(default=_REACHABLE_ALL_ALONG, repr=False, compare=False)
-    # (sleepStart, sleepEnd) of the newest night found to have ended.
-    _ended_night: tuple[datetime | None, datetime] | None = field(default=None, repr=False, compare=False)
 
     @property
     def is_lost(self) -> bool:
@@ -419,8 +441,9 @@ class Pet:
                 active_s=active_s,
             )
         self.stats = stats
-        self._observe_connection(now)
-        self._apply_overnight(pet_raw.get("lastNight"), pet_raw.get("priorNight"), now)
+        self._apply_overnight(
+            pet_raw.get("lastNight"), pet_raw.get("priorNight"), data.get("restTimeline"), midnight, now
+        )
         self.behavior_events = parse_behavior_trends(data.get("getPetHealthTrendsForPet"), midnight, now)
         self.day_segments = build_day_phases(
             data.get("restTimeline"),
@@ -483,7 +506,14 @@ class Pet:
         self.place_name = place.get("name")
         self.place_address = place.get("address")
 
-    def _apply_overnight(self, last_night: dict | None, prior_night: dict | None, now: datetime) -> None:
+    def _apply_overnight(
+        self,
+        last_night: dict | None,
+        prior_night: dict | None,
+        rest_raw: dict | None,
+        midnight: datetime,
+        now: datetime,
+    ) -> None:
         """Take the newest settled night, and note when none of them has ended.
 
         Between local midnight and the moment the dog wakes, the newest
@@ -492,10 +522,10 @@ class Pet:
         with a concrete summary whose end is still moving; absent is neither.
         """
         unavailable = (last_night or {}).get("__typename") == "UnavailableOvernightRestSummary"
-        last_ended = self._night_has_ended(last_night, now)
+        last_ended = _is_settled(last_night, now) and _got_up_after(last_night, rest_raw, midnight, now)
         self.night_in_progress = unavailable or (_is_concrete(last_night) and not last_ended)
-        # The night before last ended the morning before; a quiet collar now
-        # says nothing about it.
+        # The night before last ended the morning before; today's rest bar says
+        # nothing about it.
         for raw, ended in ((last_night, last_ended), (prior_night, _is_settled(prior_night, now))):
             if ended:
                 self.last_night_sleep_s = _as_int(raw.get("sleepSeconds"))
@@ -505,41 +535,6 @@ class Pet:
         self.last_night_sleep_s = None
         self.last_night_start = None
         self.last_night_end = None
-
-    def _observe_connection(self, now: datetime) -> None:
-        """Track the collar's current reachable run. No report is no news."""
-        reachable = self.device.is_reachable if self.device is not None else None
-        if reachable is False:
-            self._reachable_since = None
-        elif reachable and self._reachable_since is None:
-            self._reachable_since = now
-
-    def _night_has_ended(self, raw: dict | None, now: datetime) -> bool:
-        """Whether the newest night is over, rather than its collar just quiet.
-
-        Fi's end stops moving both when the dog gets up and when the collar
-        cannot upload -- out of range, switched off, flat -- and only the first
-        ends the night. So the 15 minutes count from the end or from the collar
-        coming back, whichever is later: a collar that has been reachable that
-        long without Fi extending the night means the dog is up.
-
-        Once ended, a night stays ended while its end holds, so a collar that
-        drops out later in the day cannot reopen it. If Fi moves the end on
-        after all, the night was not over and is running again.
-        """
-        if not _is_settled(raw, now):
-            return False
-        start = _as_datetime(raw.get("sleepStart"))
-        end = _as_datetime(raw.get("sleepEnd"))
-        if end is None:
-            return True
-        if self._ended_night is not None and self._ended_night[0] == start and end <= self._ended_night[1]:
-            return True
-        since = self._reachable_since
-        if since is None or now - max(end, since) < NIGHT_SETTLED_AFTER:
-            return False
-        self._ended_night = (start, end)
-        return True
 
 
 def parse_behavior_trends(raw: dict | None, midnight: datetime, now: datetime) -> dict[str, list[datetime]]:

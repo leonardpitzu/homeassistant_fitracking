@@ -1,12 +1,12 @@
 """Tests for the Fi Tracking sensor platform."""
 
 from dataclasses import fields
+from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 from homeassistant.components.sensor import SensorStateClass
 
 from custom_components.fitracking.api.models import PERIODS, Stats
-from custom_components.fitracking.api.queries import CONNECTED_STATES
 from custom_components.fitracking.const import (
     CONNECTION_ICONS,
     CONNECTION_OFFLINE,
@@ -14,7 +14,7 @@ from custom_components.fitracking.const import (
     SENSOR_STATS_BY_TIME,
     SENSOR_STATS_BY_TYPE,
 )
-from custom_components.fitracking.sensor import STAT_META, PetBehaviorSensor
+from custom_components.fitracking.sensor import STAT_META, PetBehaviorSensor, scale_stat
 
 STATS_FIELDS = {field.name for field in fields(Stats)}
 
@@ -22,11 +22,6 @@ STATS_FIELDS = {field.name for field in fields(Stats)}
 def test_every_connection_state_has_an_icon():
     """The sensor's options are the icon keys, so a gap would break its icon."""
     assert set(CONNECTION_STATES.values()) | {CONNECTION_OFFLINE} == set(CONNECTION_ICONS)
-
-
-def test_the_sensor_and_the_night_agree_on_what_reachable_means():
-    """A transport the sensor names but the night ignores would hold nights open."""
-    assert set(CONNECTION_STATES) == CONNECTED_STATES
 
 
 def test_fi_typenames_are_not_the_state():
@@ -64,14 +59,26 @@ def test_periods_match_the_model():
         ("STEPS", 12049, 12049),
         ("GOAL", 12000, 12000),
         ("DISTANCE", 1430, 1.43),  # metres -> km
-        ("SLEEP", 5454, 90.9),  # seconds -> minutes
-        ("NAP", 3441, 57.35),
+        ("SLEEP", 5454, 91),  # seconds -> whole minutes
+        ("SLEEP", 5430, 91),  # a half rounds up, as the display rounds it
+        ("SLEEP", 5429, 90),
+        ("NAP", 3441, 57),
+        ("ACTIVE", 491, 8.18),  # left as it was
     ],
 )
 def test_unit_scaling(stat_type, raw, expected):
-    meta = STAT_META[stat_type]
-    value = raw if meta["divisor"] == 1 else round(raw / meta["divisor"], 2)
-    assert value == expected
+    assert scale_stat(STAT_META[stat_type], raw) == expected
+
+
+def test_whole_minutes_show_what_the_display_always_showed():
+    """Cards and badges showed the old two-decimal value at 0 decimals, halves up.
+
+    Every second of a 24-hour day must read the same as it did on screen.
+    """
+    for seconds in range(24 * 3600 + 1):
+        stored_before = Decimal(str(round(seconds / 60, 2)))
+        shown_before = int(stored_before.quantize(Decimal(1), rounding=ROUND_HALF_UP))
+        assert scale_stat(STAT_META["SLEEP"], seconds) == shown_before, seconds
 
 
 def test_icons_are_distinct():

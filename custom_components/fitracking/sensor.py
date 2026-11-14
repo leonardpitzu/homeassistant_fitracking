@@ -54,6 +54,10 @@ STAT_META = {
         "unit": UnitOfTime.MINUTES,
         "divisor": 60,
         "precision": 0,
+        # While the dog sleeps Fi counts the seconds up with the clock between
+        # uploads, so fractions of a minute were a new recorder row every poll
+        # carrying nothing that is ever shown: the display is whole minutes.
+        "whole": True,
         "device_class": SensorDeviceClass.DURATION,
         # Fi also reclassifies rest between nap and sleep, moving minutes
         # between these two after they were first reported.
@@ -65,6 +69,7 @@ STAT_META = {
         "unit": UnitOfTime.MINUTES,
         "divisor": 60,
         "precision": 0,
+        "whole": True,
         "device_class": SensorDeviceClass.DURATION,
         "state_class": SensorStateClass.MEASUREMENT,
     },
@@ -244,6 +249,17 @@ class PetBehaviorSensor(FiPetEntity, SensorEntity):
         }
 
 
+def scale_stat(meta: dict, raw: int | float) -> int | float:
+    """Fi's raw figure in the sensor's unit."""
+    divisor = meta["divisor"]
+    if divisor == 1:
+        return raw
+    if meta.get("whole"):
+        # Halves round up, as the display has always rounded them.
+        return int(raw / divisor + 0.5)
+    return round(raw / divisor, 2)
+
+
 class PetStatsSensor(FiPetEntity, SensorEntity):
     """One activity or rest metric for one period."""
 
@@ -292,8 +308,7 @@ class PetStatsSensor(FiPetEntity, SensorEntity):
         raw = getattr(stats, self._meta["field"])
         if raw is None:
             return None
-        divisor = self._meta["divisor"]
-        return raw if divisor == 1 else round(raw / divisor, 2)
+        return scale_stat(self._meta, raw)
 
 
 class PetLastNightSleepSensor(FiPetEntity, SensorEntity):
@@ -342,6 +357,10 @@ class PetDayPhaseSensor(FiPetEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = list(PHASES)
     _attr_translation_key = "day_phase"
+    # Fi draws its bars up to the present, so the bar grows every minute and
+    # each minute was a fresh copy of it in the recorder. Cards draw the live
+    # state, which keeps these; the recorded history keeps the phase.
+    _unrecorded_attributes = frozenset({"reported_minutes", "totals", "segments"})
 
     @property
     def name(self):

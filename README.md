@@ -36,6 +36,12 @@ period, but Fi also revises them downward after first reporting them, and Home
 Assistant's 10% reset tolerance is relative — so a 30 m correction to a 50 m
 morning walk reads as a counter reset and adds a phantom cycle to the sum.
 
+`Sleep` and `Nap` are whole minutes, which is how they have always been shown.
+While the dog sleeps, Fi counts the seconds up with the clock between the
+collar's uploads, so fractions of a minute made a new recorder row on every poll
+and carried nothing that was ever displayed. A half minute rounds up, as the
+display does.
+
 Plus, per pet: collar battery level (`%`, `battery`), activity type, current place name, current place address, and the current connection source. Each Fi Base reports `Online` / `Offline`.
 
 A metric Fi has not reported reads `unknown`, never `0`.
@@ -70,14 +76,17 @@ and never moves it again, so the switch happens about a quarter of an hour after
 the dog gets up, and it shows Fi's final figures.
 
 The end also stands still when the collar cannot upload — out of range, switched
-off or flat — and that is not the dog getting up. So the 15 minutes only count
-while `Connected To` says the collar is reachable: they run from the end or from
-the collar coming back, whichever is later. A collar that has been reachable that
-long without Fi extending the night means the dog is up. One that goes quiet
-overnight leaves the night running until it is back and Fi has caught up, and a
-collar dropping out after a night has ended does not reopen it. A restart takes
-the collar to have been reachable all along, so a finished night is not held
-back — unless it is out of reach at that moment, and then the night waits for it.
+off, flat, or back but not yet synced — and that is not the dog getting up. Fi
+tells the two apart on its own rest bar: while the collar is quiet it keeps
+drawing rest up to the present, and once the dog is up the bar shows something
+other than rest after the night's end — awake, active, or the collar taken off.
+So a night also needs that before it counts as finished. Fi pads the last rest a
+few minutes past the end now and then, which the 15 minutes already cover: over
+30 mornings the switch came at the same moment as with the end alone, and the
+two collar silences of 23 October, which the end alone would have read as the
+dog getting up, kept the night running. Nothing is remembered between polls, so
+a restart changes nothing, and an answer from Fi without the rest bar falls back
+to the end alone.
 
 ### Day Phase — the whole day as 1440 minutes
 
@@ -108,6 +117,10 @@ segments:
   - {phase: night_sleep, start: 59, minutes: 454}
 ```
 
+Fi draws its bars up to the present, so the bar grows every minute. Cards read
+the live state, which always carries it; the recorder keeps only the phase, not
+a fresh copy of `segments`, `totals` and `reported_minutes` every minute.
+
 Fi stretches any event shorter than its minimum render width to that width, so
 short slices — the three-minute `active` stubs either side of a long rest — are
 placements, not measurements. The bar mirrors what the Fi app draws; the `Active`
@@ -123,8 +136,8 @@ A day is night, day, next night, and a night always straddles two bars: its
 evening hours belong to the day it began, its remaining hours to the next one.
 The two ends are recognised differently. The morning one is Fi's own — bounded by
 the settled session's `sleepEnd`, or left open while the dog is still *in* that
-night: Fi answers `Unavailable`, or keeps moving `sleepEnd` with every upload (see
-`Last Night Sleep` above). The evening one
+night: Fi answers `Unavailable`, keeps moving `sleepEnd` with every upload, or
+the collar has gone quiet (see `Last Night Sleep` above). The evening one
 cannot be, because Fi does not settle a night until the morning after, so it is
 read off the bar instead: rest still running at the collar's last report, begun
 no earlier than two hours before the dog went to bed last time, is the night
@@ -656,8 +669,7 @@ no use on a dashboard, so the sensor is an enum with proper states:
 | `offline` | Offline | Out of reach, or on a transport Fi has not named before |
 
 A collar sitting on `cellular` while at home usually means the Base is out of
-Bluetooth range. While it reads `offline`, a night still running is not taken
-to have ended (see `Last Night Sleep`).
+Bluetooth range.
 
 ## Differences from upstream
 
@@ -685,6 +697,7 @@ to have ended (see `Last Night Sleep`).
 | `Connected To` reads as English | Upstream surfaced Fi's raw GraphQL `__typename`, so dashboards showed `ConnectedToUser`; it is now a translated enum |
 | Transient Fi failures ridden out | A single `502` from Fi's gateway took every entity to `unavailable`, and a failed pet request blanked every statistic to `unknown` |
 | Tracker written only when the fix changes | `TrackerEntity` forces every write of a non-polling entity, so each poll was a recorder row and `last_changed` never aged past the polling interval |
+| Sleep and Nap in whole minutes, the Day Phase bar kept out of the recorder | Fi counts sleep up with the clock and redraws its bars every minute, so each poll was a recorder row and each minute a fresh copy of the bar — none of it ever shown |
 
 ## Credits
 

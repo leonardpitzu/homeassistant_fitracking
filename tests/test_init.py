@@ -84,7 +84,9 @@ async def test_entry_unloads_cleanly(hass, mock_client):
     ("entity_id", "expected"),
     [
         ("sensor.scottie_collar_battery_level", "77"),
-        ("sensor.scottie_weekly_sleep", "1646.75"),  # 98805s -> minutes
+        ("sensor.scottie_weekly_sleep", "1647"),  # 98805s -> whole minutes
+        ("sensor.scottie_weekly_nap", "599"),  # 35943s
+        ("sensor.scottie_weekly_distance", "2.55"),  # unchanged: 2546 m -> km
         ("sensor.scottie_last_night_sleep", "663.72"),
         ("sensor.scottie_connected_to", "base"),
         ("sensor.scottie_current_place_name", "Home"),
@@ -98,6 +100,15 @@ async def test_entity_states(hass, mock_client, entity_id, expected):
     state = hass.states.get(entity_id)
     assert state is not None, f"{entity_id} was never created"
     assert state.state == expected
+
+
+async def test_the_day_bar_stays_live_but_out_of_the_recorder(hass, mock_client):
+    """The Day card draws the live attributes; history only needs the phase."""
+    await _setup(hass)
+    state = hass.states.get("sensor.scottie_day_phase")
+    assert {"day_minutes", "reported_minutes", "totals", "segments"} <= set(state.attributes)
+    assert state.state_info["unrecorded_attributes"] >= {"reported_minutes", "totals", "segments"}
+    assert "day_minutes" not in state.state_info["unrecorded_attributes"]
 
 
 async def test_absent_rest_reads_unknown_not_zero(hass, mock_client):

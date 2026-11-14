@@ -174,125 +174,88 @@ def test_a_brief_stir_on_waking_does_not_settle_the_night():
 class TestNightEndVersusQuietCollar:
     """Fi's end stops moving when the dog gets up, and when the collar cannot upload.
 
-    Replays the shape of 23 Oct: uploads stop, the collar reads offline about
-    three minutes later, comes back on the Base for a few minutes without
-    uploading, drops out again, and the night carries on once it returns.
+    Only the first ends the night. In the second Fi keeps drawing rest up to the
+    present, so the rest bar tells the two apart. The shapes are from 23 Oct
+    (two silences) and from the mornings the 30-day replay covered.
     """
 
     START = "2026-09-18T20:38:00.000Z"
 
-    def _poll(self, pet, at, connection, end, seconds=20000):
-        pet.apply_profile(
-            {
-                "id": "p1",
-                "name": "Scottie",
-                "device": {"id": "d1", "lastConnectionState": connection and {"__typename": connection}},
-            }
-        )
+    def _at(self, now, end, rest, seconds=40306):
         night = _overnight(seconds, start=self.START, end=end)
-        pet.apply_detail({"pet": _detail(lastNight=night, priorNight=PRIOR_NIGHT)}, MIDNIGHT, MIDNIGHT + at)
-        return pet
-
-    def _fresh(self):
-        return Pet.parse_profile({"id": "p1", "name": "Scottie"})
-
-    def _running_until_01_32(self):
-        pet = self._fresh()
-        self._poll(pet, timedelta(hours=1, minutes=30), "ConnectedToBase", "2026-09-19T01:30:00.000Z")
-        return self._poll(
-            pet, timedelta(hours=1, minutes=32, seconds=10), "ConnectedToBase", "2026-09-19T01:32:10.000Z"
+        return _pet(
+            _detail(lastNight=night, priorNight=PRIOR_NIGHT),
+            now=MIDNIGHT + now,
+            restTimeline=_timeline(*rest),
         )
 
     def assert_running(self, pet):
         assert pet.night_in_progress
         assert pet.last_night_sleep_s == 39823
 
-    def test_a_collar_out_of_reach_does_not_end_the_night(self):
-        pet = self._running_until_01_32()
-        for minute in (35, 50, 59):
-            self._poll(pet, timedelta(hours=1, minutes=minute), "UnknownConnectivity", "2026-09-19T01:32:10.000Z")
+    def assert_over(self, pet):
+        assert not pet.night_in_progress
+        assert pet.last_night_sleep_s == 40306
+
+    def test_a_silent_collar_does_not_end_the_night(self):
+        """Uploads stopped at 01:32; Fi draws the rest on to the present."""
+        for minutes in (110, 125, 135, 145):
+            pet = self._at(timedelta(minutes=minutes), "2026-09-19T01:32:10.000Z", [_interval("EVENT", 0, minutes)])
             self.assert_running(pet)
 
-    def test_a_collar_back_but_not_yet_uploading_does_not_end_it_either(self):
-        pet = self._running_until_01_32()
-        self._poll(pet, timedelta(hours=1, minutes=35), "UnknownConnectivity", "2026-09-19T01:32:10.000Z")
-        self._poll(pet, timedelta(hours=2, minutes=1), "ConnectedToBase", "2026-09-19T01:32:10.000Z")
-        self._poll(pet, timedelta(hours=2, minutes=4), "ConnectedToBase", "2026-09-19T01:32:10.000Z")
-        self.assert_running(pet)
-        self._poll(pet, timedelta(hours=2, minutes=5), "UnknownConnectivity", "2026-09-19T01:32:10.000Z")
-        self._poll(pet, timedelta(hours=2, minutes=24), "ConnectedToBase", "2026-09-19T01:32:10.000Z")
-        self.assert_running(pet)
-        self._poll(pet, timedelta(hours=2, minutes=25), "ConnectedToBase", "2026-09-19T02:24:28.000Z")
+    def test_a_collar_back_before_its_data_is_still_night(self):
+        """Back on the Base at 02:01, data through only at 02:24: still rest to now."""
+        pet = self._at(timedelta(hours=2, minutes=5), "2026-09-19T01:32:10.000Z", [_interval("EVENT", 0, 125)])
         self.assert_running(pet)
 
-    def test_a_reachable_collar_fi_stopped_extending_means_the_dog_is_up(self):
-        """A collar reachable for 15 minutes after the end would have moved it."""
-        pet = self._fresh()
-        self._poll(pet, timedelta(hours=7, minutes=43, seconds=56), "ConnectedToBase", "2026-09-19T07:43:56.000Z")
-        self._poll(pet, timedelta(hours=7, minutes=58), "ConnectedToBase", "2026-09-19T07:43:56.000Z", 40306)
-        self.assert_running(pet)
-        self._poll(pet, timedelta(hours=7, minutes=59), "ConnectedToBase", "2026-09-19T07:43:56.000Z", 40306)
-        assert not pet.night_in_progress
-        assert pet.last_night_sleep_s == 40306
-
-    def test_the_wait_counts_from_the_collar_coming_back(self):
-        pet = self._running_until_01_32()
-        self._poll(pet, timedelta(hours=1, minutes=35), "UnknownConnectivity", "2026-09-19T01:32:10.000Z")
-        self._poll(pet, timedelta(hours=2, minutes=1), "ConnectedToBase", "2026-09-19T01:32:10.000Z")
-        self._poll(pet, timedelta(hours=2, minutes=15), "ConnectedToBase", "2026-09-19T01:32:10.000Z")
-        self.assert_running(pet)
-        self._poll(pet, timedelta(hours=2, minutes=16), "ConnectedToBase", "2026-09-19T01:32:10.000Z")
-        assert not pet.night_in_progress
-
-    def test_an_ended_night_stays_ended_when_the_collar_drops_out_later(self):
-        pet = self._fresh()
-        self._poll(pet, timedelta(hours=7, minutes=43, seconds=56), "ConnectedToBase", "2026-09-19T07:43:56.000Z")
-        self._poll(pet, timedelta(hours=8), "ConnectedToBase", "2026-09-19T07:43:56.000Z", 40306)
-        self._poll(pet, timedelta(hours=22), "UnknownConnectivity", "2026-09-19T07:43:56.000Z", 40306)
-        assert not pet.night_in_progress
-        assert pet.last_night_sleep_s == 40306
-
-    def test_fis_trim_after_the_end_does_not_reopen_the_night(self):
-        pet = self._fresh()
-        self._poll(pet, timedelta(hours=7, minutes=44), "ConnectedToBase", "2026-09-19T07:44:04.000Z")
-        self._poll(pet, timedelta(hours=8), "ConnectedToBase", "2026-09-19T07:44:04.000Z")
-        self._poll(pet, timedelta(hours=8, minutes=1), "UnknownConnectivity", "2026-09-19T07:43:56.000Z", 40306)
-        assert not pet.night_in_progress
-        assert pet.last_night_sleep_s == 40306
-
-    def test_a_restart_does_not_hold_back_a_night_that_ended_hours_ago(self):
-        pet = self._poll(self._fresh(), timedelta(hours=14), "ConnectedToBase", "2026-09-19T07:43:56.000Z", 40306)
-        assert not pet.night_in_progress
-        assert pet.last_night_sleep_s == 40306
-
-    def test_a_night_taken_as_ended_runs_again_when_fi_moves_its_end(self):
-        """A restart cannot know the collar was just out of reach; Fi settles it."""
-        pet = self._poll(self._fresh(), timedelta(hours=2, minutes=2), "ConnectedToBase", "2026-09-19T01:32:10.000Z")
-        assert not pet.night_in_progress
-        self._poll(pet, timedelta(hours=2, minutes=25), "ConnectedToBase", "2026-09-19T02:24:28.000Z")
+    def test_a_night_carried_on_once_the_data_arrives(self):
+        pet = self._at(timedelta(hours=2, minutes=25), "2026-09-19T02:24:28.000Z", [_interval("EVENT", 0, 145)])
         self.assert_running(pet)
 
-    def test_a_restart_with_the_collar_out_of_reach_waits_for_it(self):
-        pet = self._poll(self._fresh(), timedelta(hours=14), "UnknownConnectivity", "2026-09-19T07:43:56.000Z", 40306)
-        self.assert_running(pet)
-        self._poll(pet, timedelta(hours=14, minutes=5), "ConnectedToWifi", "2026-09-19T07:43:56.000Z", 40306)
-        self.assert_running(pet)
-        self._poll(pet, timedelta(hours=14, minutes=20), "ConnectedToWifi", "2026-09-19T07:43:56.000Z", 40306)
-        assert pet.last_night_sleep_s == 40306
+    def test_a_dog_that_got_up_ends_the_night_after_the_usual_wait(self):
+        """Today, 14 Nov: rest to 08:30:06, nine minutes up, then rest again."""
+        rest = [_interval("EVENT", 0, 510), _interval("NOTHING", 510, 9), _interval("EVENT", 519, 30)]
+        end = "2026-09-19T08:30:06.000Z"
+        self.assert_running(self._at(timedelta(hours=8, minutes=44), end, rest))
+        self.assert_over(self._at(timedelta(hours=8, minutes=46), end, rest))
 
-    def test_no_connection_report_is_no_news(self):
-        pet = self._running_until_01_32()
-        self._poll(pet, timedelta(hours=1, minutes=35), "UnknownConnectivity", "2026-09-19T01:32:10.000Z")
-        self._poll(pet, timedelta(hours=2), None, "2026-09-19T01:32:10.000Z")
-        self.assert_running(pet)
+    def test_padding_past_the_end_only_delays_it(self):
+        """19 and 29 Oct: Fi padded the last rest four minutes past the end."""
+        rest = [_interval("EVENT", 0, 501), _interval("NOTHING", 501, 2), _interval("EVENT", 503, 60)]
+        self.assert_over(self._at(timedelta(hours=8, minutes=34), "2026-09-19T08:17:57.000Z", rest))
 
-    def test_the_night_before_last_ignores_the_collar(self):
-        pet = self._fresh()
-        pet.apply_profile(
-            {"id": "p1", "name": "Scottie", "device": {"id": "d1", "lastConnectionState": {"__typename": "X"}}}
-        )
-        pet.apply_detail({"pet": _detail(lastNight=UNAVAILABLE, priorNight=PRIOR_NIGHT)}, MIDNIGHT, NOW)
-        assert pet.last_night_sleep_s == 39823
+    def test_up_but_not_counted_active_still_ends_it(self):
+        """2 Nov: walking, yet Fi's activity bar stayed empty. Not rest is enough."""
+        rest = [_interval("EVENT", 0, 485), _interval("NOTHING", 485, 25)]
+        self.assert_over(self._at(timedelta(hours=8, minutes=30), "2026-09-19T08:05:05.000Z", rest))
+
+    def test_a_collar_taken_off_on_waking_ends_it(self):
+        rest = [_interval("EVENT", 0, 480), _interval("DEVICE_OFF", 480, 60)]
+        self.assert_over(self._at(timedelta(hours=9), "2026-09-19T08:00:00.000Z", rest))
+
+    def test_a_stir_inside_the_night_is_not_after_its_end(self):
+        """The gap lies before the end: Fi carried the night on through it."""
+        rest = [_interval("EVENT", 0, 45), _interval("NOTHING", 45, 9), _interval("EVENT", 54, 116)]
+        self.assert_running(self._at(timedelta(hours=2, minutes=50), "2026-09-19T02:30:00.000Z", rest))
+
+    def test_the_present_marker_is_not_time_awake(self):
+        """Fi closes its bar with a zero-length NOTHING at the present."""
+        rest = [_interval("EVENT", 0, 125), _interval("NOTHING", 125, 0)]
+        self.assert_running(self._at(timedelta(hours=2, minutes=5), "2026-09-19T01:32:10.000Z", rest))
+
+    def test_a_bar_padded_past_the_present_is_cut_at_it(self):
+        rest = [_interval("EVENT", 0, 137)]
+        self.assert_running(self._at(timedelta(hours=2, minutes=5), "2026-09-19T01:32:10.000Z", rest))
+
+    def test_the_evening_still_knows_this_mornings_night_is_over(self):
+        rest = [_interval("EVENT", 0, 463), _interval("NOTHING", 463, 600), _interval("EVENT", 1063, 300)]
+        self.assert_over(self._at(timedelta(hours=22, minutes=30), "2026-09-19T07:43:56.000Z", rest))
+
+    def test_without_a_rest_bar_the_end_standing_still_is_enough(self):
+        """A partial answer from Fi must not hold back a night that is over."""
+        night = _overnight(40306, start=self.START, end="2026-09-19T07:43:56.000Z")
+        pet = _pet(_detail(lastNight=night, priorNight=PRIOR_NIGHT), now=MIDNIGHT + timedelta(hours=8))
+        self.assert_over(pet)
 
 
 def test_ongoing_rest_records_when_it_started():
@@ -426,7 +389,8 @@ class TestDayPhases:
     def test_last_nights_session_is_split_out_of_the_days_rest(self):
         """Only the part of the night after local midnight belongs to today."""
         pet = self._pet_with(
-            rest=_timeline(_interval("EVENT", 0, 600)),
+            # Up at 10:00: a bar ending in rest would be a collar gone quiet.
+            rest=_timeline(_interval("EVENT", 0, 600), _interval("NOTHING", 600, 30)),
             lastNight=_overnight(40306, start="2026-09-18T21:19:00.000Z", end="2026-09-19T05:33:00.000Z"),
         )
         by_phase = {item.phase: item for item in pet.day_segments}
