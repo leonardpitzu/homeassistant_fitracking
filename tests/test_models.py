@@ -238,6 +238,21 @@ class TestNightEndVersusQuietCollar:
         rest = [_interval("EVENT", 0, 45), _interval("NOTHING", 45, 9), _interval("EVENT", 54, 116)]
         self.assert_running(self._at(timedelta(hours=2, minutes=50), "2026-09-19T02:30:00.000Z", rest))
 
+    def test_a_collar_quiet_since_the_evening_keeps_the_night_past_midnight(self):
+        """25 Oct: just after midnight Fi's end was 23:58, before today's bar began.
+
+        Those minutes are on yesterday's bar, not time the dog was up. Read as
+        up, a collar quiet since 23:40 ended the night at 00:00 and showed the
+        partial night as Last Night Sleep until it uploaded again.
+        """
+        end = "2026-09-18T23:40:00.000Z"
+        for minutes in (1, 15, 30):
+            self.assert_running(self._at(timedelta(minutes=minutes), end, [_interval("EVENT", 0, minutes)]))
+
+    def test_a_dog_up_since_before_midnight_still_ends_it(self):
+        rest = [_interval("NOTHING", 0, 30)]
+        self.assert_over(self._at(timedelta(minutes=30), "2026-09-18T23:50:00.000Z", rest))
+
     def test_the_present_marker_is_not_time_awake(self):
         """Fi closes its bar with a zero-length NOTHING at the present."""
         rest = [_interval("EVENT", 0, 125), _interval("NOTHING", 125, 0)]

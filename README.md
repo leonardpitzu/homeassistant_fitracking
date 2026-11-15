@@ -80,8 +80,10 @@ off, flat, or back but not yet synced — and that is not the dog getting up. Fi
 tells the two apart on its own rest bar: while the collar is quiet it keeps
 drawing rest up to the present, and once the dog is up the bar shows something
 other than rest after the night's end — awake, active, or the collar taken off.
-So a night also needs that before it counts as finished. Fi pads the last rest a
-few minutes past the end now and then, which the 15 minutes already cover: over
+So a night also needs that before it counts as finished. Only today's bar is
+read: when the collar went quiet before midnight, the minutes from its end to
+midnight are on yesterday's bar and are not the dog being up. Fi pads the last
+rest a few minutes past the end now and then, which the 15 minutes already cover: over
 30 mornings the switch came at the same moment as with the end alone, and the
 two collar silences of 23 October, which the end alone would have read as the
 dog getting up, kept the night running. Nothing is remembered between polls, so
@@ -104,7 +106,9 @@ day carries exactly one phase**, so the six always add up to 1440.
 | `offline` | Collar off or charging; nothing is knowable here |
 | `no_data` | The part of the day Fi has not reported on yet |
 
-The state is the phase Fi last reported. The bar itself is on the attributes,
+The state is the phase Fi last reported, over midnight too: in a day's first
+minute nothing of it is reported yet, and the state stays on the end of
+yesterday's bar rather than going `unknown`. The bar itself is on the attributes,
 already ordered and gapless, so a card needs no arithmetic of its own:
 
 ```yaml
@@ -145,6 +149,12 @@ starting rather than another nap. That bedtime comes from last night's own
 `sleepStart`, so the threshold follows the dog rather than the clock, and without
 a settled night to anchor on no evening night is guessed at. Stirs shorter
 than 15 minutes stay inside it, which is just above Fi's own render pad.
+
+A nap straight after getting up shows as `night_sleep` until the night settles,
+then as `day_sleep`. Until then Fi may still carry the night on over it, as it
+does over a stir, and its answers cannot tell the two apart any sooner: over 30
+mornings, a stir differed from a nap only in Fi moving the end one poll after
+redrawing the bar.
 
 Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `max`:
 

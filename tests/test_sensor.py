@@ -2,11 +2,19 @@
 
 from dataclasses import fields
 from decimal import ROUND_HALF_UP, Decimal
+from types import SimpleNamespace
 
 import pytest
 from homeassistant.components.sensor import SensorStateClass
 
-from custom_components.fitracking.api.models import PERIODS, Stats
+from custom_components.fitracking.api.models import (
+    PERIODS,
+    PHASE_NIGHT_SLEEP,
+    PHASE_NO_DATA,
+    Pet,
+    Stats,
+    build_day_phases,
+)
 from custom_components.fitracking.const import (
     CONNECTION_ICONS,
     CONNECTION_OFFLINE,
@@ -14,7 +22,7 @@ from custom_components.fitracking.const import (
     SENSOR_STATS_BY_TIME,
     SENSOR_STATS_BY_TYPE,
 )
-from custom_components.fitracking.sensor import STAT_META, PetBehaviorSensor, scale_stat
+from custom_components.fitracking.sensor import STAT_META, PetBehaviorSensor, PetDayPhaseSensor, scale_stat
 
 STATS_FIELDS = {field.name for field in fields(Stats)}
 
@@ -103,3 +111,37 @@ def test_no_sensor_is_a_counter():
     # value only resolves through the public property on an instance.
     state_classes.append(object.__new__(PetBehaviorSensor).state_class)
     assert all(state_class is SensorStateClass.MEASUREMENT for state_class in state_classes)
+
+
+def test_day_phase_holds_the_night_over_midnight():
+    """Today's bar reports nothing in its first minute, since the minute in
+    progress never counts. The night does not blink to unknown meanwhile."""
+    pet = Pet(pet_id="p1", name="Scottie")
+    coordinator = SimpleNamespace(data=SimpleNamespace(get_pet=lambda _: pet))
+    sensor = PetDayPhaseSensor(coordinator, pet)
+
+    def bar(seconds):
+        return {"segmentedTimeline": {"intervals": [{"intervalType": "EVENT", "offset": 0, "length": seconds}]}}
+
+    night = (0, 1440)
+
+    # 23:59 yesterday, asleep since bedtime.
+    pet.day_segments = build_day_phases(bar(86400), None, night, 1200, 1439)
+    assert sensor.native_value == PHASE_NIGHT_SLEEP
+
+    # 00:00:30 -- today's bar has its rest, padded into the future, but the
+    # minute in progress is all there is and it never counts.
+    rest = bar(700)
+    pet.day_segments = build_day_phases(rest, None, night, None, 0)
+    assert {segment.phase for segment in pet.day_segments} == {PHASE_NO_DATA}
+    assert sensor.native_value == PHASE_NIGHT_SLEEP
+
+    # 00:01 -- today's first minute is in.
+    pet.day_segments = build_day_phases(rest, None, night, None, 1)
+    assert sensor.native_value == PHASE_NIGHT_SLEEP
+
+
+def test_day_phase_is_unknown_until_fi_reports_anything():
+    pet = Pet(pet_id="p1", name="Scottie")
+    coordinator = SimpleNamespace(data=SimpleNamespace(get_pet=lambda _: pet))
+    assert PetDayPhaseSensor(coordinator, pet).native_value is None

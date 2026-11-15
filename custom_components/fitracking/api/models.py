@@ -130,7 +130,9 @@ def _got_up_after(raw: dict, rest_raw: dict | None, midnight: datetime, now: dat
             spans.append((item.get("intervalType"), offset, offset + length))
     # Fi's bar runs to the present, padded past it now and then.
     horizon = min(max((stop for _, _, stop in spans), default=0.0), (now - midnight).total_seconds())
-    cursor = (end - midnight).total_seconds()
+    # The bar is today's. An end before midnight -- the collar went quiet in
+    # the evening -- leaves nothing on it to read as the dog being up.
+    cursor = max(0.0, (end - midnight).total_seconds())
     for start, stop in sorted((start, stop) for kind, start, stop in spans if kind == "EVENT"):
         if stop <= cursor:
             continue

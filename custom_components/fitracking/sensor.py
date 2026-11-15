@@ -361,6 +361,7 @@ class PetDayPhaseSensor(FiPetEntity, SensorEntity):
     # each minute was a fresh copy of it in the recorder. Cards draw the live
     # state, which keeps these; the recorded history keeps the phase.
     _unrecorded_attributes = frozenset({"reported_minutes", "totals", "segments"})
+    _last_phase: str | None = None
 
     @property
     def name(self):
@@ -372,8 +373,14 @@ class PetDayPhaseSensor(FiPetEntity, SensorEntity):
 
     @property
     def native_value(self):
+        # For the first minute after midnight today's bar has nothing reported
+        # yet -- the minute in progress never counts -- and the phase Fi last
+        # reported is the end of yesterday's. Holding it keeps the night from
+        # blinking to unknown at midnight.
         reported = [item for item in self.pet.day_segments if item.phase != PHASE_NO_DATA]
-        return reported[-1].phase if reported else None
+        if reported:
+            self._last_phase = reported[-1].phase
+        return self._last_phase
 
     @property
     def extra_state_attributes(self):
