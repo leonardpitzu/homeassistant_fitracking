@@ -85,12 +85,13 @@ query {
 # long as the current night started yesterday. restFeed's totals are clipped at
 # the period boundary, which is what the Fi app shows for the day, week and month.
 #
-# Fi keys a night by the evening it BEGAN and answers Unavailable until that
-# night ends, so last night lives under yesterday's date from the moment it
-# settles -- and under the day before that between local midnight and the
-# moment the current night settles. Both are asked for in the one round trip.
+# Fi keys a night by the evening it BEGAN, so last night lives under yesterday's
+# date from the moment it settles -- and under the day before that between local
+# midnight and the moment the current night settles. Today's date is the night
+# starting this evening: Unavailable until Fi starts it, then concrete with the
+# start Fi gave it. All three are asked for in the one round trip.
 PET_DETAIL = """
-query PetDetail($petId: ID!, $lastNight: DateTime!, $priorNight: DateTime!) {
+query PetDetail($petId: ID!, $tonight: DateTime!, $lastNight: DateTime!, $priorNight: DateTime!) {
   pet(id: $petId) {
     ongoingActivity {
       __typename
@@ -109,6 +110,7 @@ query PetDetail($petId: ID!, $lastNight: DateTime!, $priorNight: DateTime!) {
     dailyRest: restFeed(cursor: null, period: DAY) { ...RestFeedDetails }
     weeklyRest: restFeed(cursor: null, period: WEEK) { ...RestFeedDetails }
     monthlyRest: restFeed(cursor: null, period: MONTH) { ...RestFeedDetails }
+    tonight: overnightRestSummary(date: $tonight) { ...OvernightDetails }
     lastNight: overnightRestSummary(date: $lastNight) { ...OvernightDetails }
     priorNight: overnightRestSummary(date: $priorNight) { ...OvernightDetails }
   }

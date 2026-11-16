@@ -133,6 +133,7 @@ class FiClient:
                     bases.append(base)
 
         nights = {
+            "tonight": _fi_date(midnight),
             "lastNight": _fi_date(midnight - timedelta(days=1)),
             "priorNight": _fi_date(midnight - timedelta(days=2)),
         }

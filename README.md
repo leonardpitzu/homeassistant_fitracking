@@ -99,7 +99,7 @@ day carries exactly one phase**, so the six always add up to 1440.
 
 | Phase | Meaning |
 |---|---|
-| `night_sleep` | Rest belonging to a night rather than to the day — last night's tail after midnight, and the next night once the dog settles into it |
+| `night_sleep` | Rest belonging to a night rather than to the day — last night's tail after midnight, and the next night once Fi has started it |
 | `day_sleep` | Any other rest |
 | `active` | Fi judged the dog active — walks and everything else |
 | `idle` | Reporting, but neither resting nor active. Usually empty: Fi pads every activity event to ~12 minutes, which swallows the short gaps between rests |
@@ -138,17 +138,19 @@ got up shows a minute later instead.
 
 A day is night, day, next night, and a night always straddles two bars: its
 evening hours belong to the day it began, its remaining hours to the next one.
-The two ends are recognised differently. The morning one is Fi's own — bounded by
-the settled session's `sleepEnd`, or left open while the dog is still *in* that
-night: Fi answers `Unavailable`, keeps moving `sleepEnd` with every upload, or
-the collar has gone quiet (see `Last Night Sleep` above). The evening one
-cannot be, because Fi does not settle a night until the morning after, so it is
-read off the bar instead: rest still running at the collar's last report, begun
-no earlier than two hours before the dog went to bed last time, is the night
-starting rather than another nap. That bedtime comes from last night's own
-`sleepStart`, so the threshold follows the dog rather than the clock, and without
-a settled night to anchor on no evening night is guessed at. Stirs shorter
-than 15 minutes stay inside it, which is just above Fi's own render pad.
+Both ends are Fi's own; the integration does not decide where a night lies. The
+morning one is bounded by the settled session's `sleepEnd`, or left open while
+the dog is still *in* that night: Fi answers `Unavailable`, keeps moving
+`sleepEnd` with every upload, or the collar has gone quiet (see `Last Night
+Sleep` above). The evening one comes from Fi's overnight summary for today's
+date, which is `Unavailable` until Fi starts the night and then carries the
+start Fi gave it. Fi does that once a rest reaching past 20:00 has gone on for
+about an hour, and backdates the night to when the dog lay down — never earlier
+than 20:00. Until then the evening rest is `day_sleep`, as Fi counts it; once
+Fi starts the night the state turns `night_sleep` and the bar redraws from the
+backdated start. `Daily Nap` drops and `Daily Sleep` rises by the same minutes
+at that moment, so the daily `max` of `Daily Nap` overstates naps on such an
+evening — its last value of the day is Fi's final figure.
 
 A nap straight after getting up shows as `night_sleep` until the night settles,
 then as `day_sleep`. Until then Fi may still carry the night on over it, as it

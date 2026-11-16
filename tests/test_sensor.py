@@ -126,7 +126,7 @@ def test_day_phase_holds_the_night_over_midnight():
     night = (0, 1440)
 
     # 23:59 yesterday, asleep since bedtime.
-    pet.day_segments = build_day_phases(bar(86400), None, night, 1200, 1439)
+    pet.day_segments = build_day_phases(bar(86400), None, None, (1200, 1440), 1439)
     assert sensor.native_value == PHASE_NIGHT_SLEEP
 
     # 00:00:30 -- today's bar has its rest, padded into the future, but the

@@ -35,19 +35,16 @@ PHASES = (
     PHASE_NO_DATA,
 )
 
-# A day runs night, day, next night. Fi settles a night only the morning after,
-# so the evening one has to be recognised while it is happening: rest that is
-# still running at the collar's last report, and started no earlier than the dog
-# went to bed last time, is the night beginning rather than another nap. The
-# margin lets an earlier bedtime still count. Brief stirs stay inside the night
-# -- Fi's own render pad is ~12 minutes, so the tolerance sits just above that.
-NIGHT_BEDTIME_MARGIN = 120
-NIGHT_GAP_TOLERANCE = 15
+# A day runs night, day, next night, and Fi decides both nights. It keys a night
+# by the evening it began and starts it once a rest reaching past 20:00 has run
+# for about an hour, backdated to when the dog lay down but never before 20:00.
+# From then on the night summary for today's date is concrete, so the bar's
+# evening night is Fi's, not a guess -- and until Fi starts it, it is a nap.
 
 # Fi reports the night in progress with sleepEnd at the collar's latest upload,
 # so a night is over only once its end has stood still. Shorter than this is a
-# stir, the same one the evening night is allowed to contain.
-NIGHT_SETTLED_AFTER = timedelta(minutes=NIGHT_GAP_TOLERANCE)
+# stir: Fi's own render pad is ~12 minutes, so this sits just above that.
+NIGHT_SETTLED_AFTER = timedelta(minutes=15)
 
 # An end also stands still while the collar cannot upload, and then Fi keeps
 # drawing rest up to the present. A dog that really got up shows on the rest
@@ -88,6 +85,21 @@ def _as_datetime(value: object) -> datetime | None:
 
 def _is_concrete(raw: dict | None) -> bool:
     return bool(raw) and raw.get("__typename") == "ConcreteOvernightRestSummary"
+
+
+def _tonight_start(raw: dict | None, midnight: datetime) -> datetime | None:
+    """When Fi says tonight's night began, or None while it has not started one.
+
+    Asked for by today's date, the summary is Unavailable until Fi takes the
+    evening rest for the night, then concrete with the start Fi backdated it
+    to. A start outside today is not tonight's.
+    """
+    if not _is_concrete(raw):
+        return None
+    start = _as_datetime(raw.get("sleepStart"))
+    if start is None or not midnight <= start < midnight + timedelta(days=1):
+        return None
+    return start
 
 
 def _is_settled(raw: dict | None, now: datetime) -> bool:
@@ -288,25 +300,6 @@ def _collapse(grid: list[str]) -> tuple[DaySegment, ...]:
     return tuple(segments)
 
 
-def _evening_night_start(grid: list[str], reported: int, earliest: int) -> int | None:
-    """Where tonight's rest began, walking back from the collar's last report.
-
-    Rest still running at the end of the day is the next night starting; a nap
-    is over by then. Returns None when the dog is up, or when the run reaches
-    back past the dog's bedtime and so belongs to the day instead.
-    """
-    start: int | None = None
-    gap = 0
-    for minute in range(reported - 1, earliest - 1, -1):
-        if grid[minute] == PHASE_DAY_SLEEP:
-            start, gap = minute, 0
-            continue
-        gap += 1
-        if gap > NIGHT_GAP_TOLERANCE:
-            break
-    return start
-
-
 def _paint_night(grid: list[str], window: tuple[int, int] | None) -> None:
     if window is None:
         return
@@ -319,10 +312,13 @@ def build_day_phases(
     rest_raw: dict | None,
     activity_raw: dict | None,
     night: tuple[int, int] | None,
-    bedtime: int | None,
+    evening: tuple[int, int] | None,
     now_min: int,
 ) -> tuple[DaySegment, ...]:
     """Give every minute of the local day exactly one phase.
+
+    `night` is the one that began yesterday evening, `evening` the one Fi has
+    started tonight; rest inside either is night sleep, any other rest a nap.
 
     Rest is painted over activity where the two overlap: Fi stretches any event
     shorter than its minimum render width to that width, and those stubs
@@ -357,8 +353,7 @@ def build_day_phases(
     _paint(grid, activity, "EVENT", PHASE_ACTIVE)
     _paint(grid, rest, "EVENT", PHASE_DAY_SLEEP)
     _paint_night(grid, night)
-    if bedtime is not None and (evening := _evening_night_start(grid, reported, bedtime)) is not None:
-        _paint_night(grid, (evening, reported))
+    _paint_night(grid, evening)
     # Nothing is knowable while the collar is off, so this goes on last.
     _paint(grid, rest, "DEVICE_OFF", PHASE_OFFLINE)
     _paint(grid, activity, "DEVICE_OFF", PHASE_OFFLINE)
@@ -399,6 +394,7 @@ class Pet:
     last_night_start: datetime | None = None
     last_night_end: datetime | None = None
     night_in_progress: bool = False
+    tonight_start: datetime | None = None
     day_segments: tuple[DaySegment, ...] = ()
     stats: dict[str, Stats] = field(default_factory=dict)
     behavior_events: dict[str, list[datetime]] = field(default_factory=dict)
@@ -446,29 +442,25 @@ class Pet:
         self._apply_overnight(
             pet_raw.get("lastNight"), pet_raw.get("priorNight"), data.get("restTimeline"), midnight, now
         )
+        self.tonight_start = _tonight_start(pet_raw.get("tonight"), midnight)
         self.behavior_events = parse_behavior_trends(data.get("getPetHealthTrendsForPet"), midnight, now)
         self.day_segments = build_day_phases(
             data.get("restTimeline"),
             data.get("activityTimeline"),
             self._night_window(midnight),
-            self._bedtime(midnight),
+            self._evening_window(midnight),
             int((now - midnight).total_seconds() // 60),
         )
 
-    def _bedtime(self, midnight: datetime) -> int | None:
-        """Earliest minute of today that rest may count as the night starting.
+    def _evening_window(self, midnight: datetime) -> tuple[int, int] | None:
+        """Tonight's night as [start, end of day), once Fi has started it.
 
-        Anchored on when the dog actually went to bed last time, less a margin
-        so an earlier bedtime is still recognised. Without a settled night there
-        is nothing to anchor on, and an evening night is not guessed at.
+        The bar stops at the collar's last report, so the open end cannot claim
+        anything that has not happened; past midnight the night is tomorrow's.
         """
-        if self.last_night_start is None:
+        if self.tonight_start is None:
             return None
-        went_to_bed = int((self.last_night_start - midnight).total_seconds() // 60) % DAY_MINUTES
-        # A night that began after midnight says nothing about evening bedtime.
-        if went_to_bed < DAY_MINUTES // 2:
-            return None
-        return went_to_bed - NIGHT_BEDTIME_MARGIN
+        return (int((self.tonight_start - midnight).total_seconds() // 60), DAY_MINUTES)
 
     def _night_window(self, midnight: datetime) -> tuple[int, int] | None:
         """Last night as [start, end) minutes of today, or None if it missed today.
