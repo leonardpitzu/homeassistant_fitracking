@@ -2,7 +2,7 @@
 
 Absent data is None, never a substituted zero. pytryfi defaulted sleep and nap
 to 0 before parsing and swallowed the failure, which made "Fi sent nothing"
-indistinguishable from "the dog slept nothing" -- the bug that hid Fi's daily
+indistinguishable from "the pet slept nothing" -- the bug that hid Fi's daily
 rest behaviour for as long as it did.
 """
 
@@ -35,21 +35,20 @@ PHASES = (
     PHASE_NO_DATA,
 )
 
-# A day runs night, day, next night, and Fi decides both nights. It keys a night
-# by the evening it began and starts it once a rest reaching past 20:00 has run
-# for about an hour, backdated to when the dog lay down but never before 20:00.
-# From then on the night summary for today's date is concrete, so the bar's
-# evening night is Fi's, not a guess -- and until Fi starts it, it is a nap.
-
 # Fi reports the night in progress with sleepEnd at the collar's latest upload,
 # so a night is over only once its end has stood still. Shorter than this is a
 # stir: Fi's own render pad is ~12 minutes, so this sits just above that.
 NIGHT_SETTLED_AFTER = timedelta(minutes=15)
 
 # An end also stands still while the collar cannot upload, and then Fi keeps
-# drawing rest up to the present. A dog that really got up shows on the rest
+# drawing rest up to the present. A pet that really got up shows on the rest
 # bar as at least this much time after the end that is not rest.
 UP_AFTER_NIGHT_SECONDS = 60
+
+# Fi files a whole night under the week or month it began in, so the night
+# across a period's start counts nowhere in the new period. These are the
+# aliases of that night, asked for by the evening before each period began.
+BOUNDARY_NIGHTS = {"WEEKLY": "weekEve", "MONTHLY": "monthEve"}
 
 # Behaviour events are stamped by the collar, so one from the future is not a
 # clock drift of seconds but a chart from another day.
@@ -90,9 +89,10 @@ def _is_concrete(raw: dict | None) -> bool:
 def _tonight_start(raw: dict | None, midnight: datetime) -> datetime | None:
     """When Fi says tonight's night began, or None while it has not started one.
 
-    Asked for by today's date, the summary is Unavailable until Fi takes the
-    evening rest for the night, then concrete with the start Fi backdated it
-    to. A start outside today is not tonight's.
+    Fi keys a night by the evening it began. Asked for by today's date, the
+    summary is Unavailable until a rest reaching past 20:00 has run for about
+    an hour; then it is concrete, with the start backdated to when the pet lay
+    down but never before 20:00. A start outside today is not tonight's.
     """
     if not _is_concrete(raw):
         return None
@@ -102,12 +102,31 @@ def _tonight_start(raw: dict | None, midnight: datetime) -> datetime | None:
     return start
 
 
+def _boundary_sleep(raw: dict | None, period_start: datetime, now: datetime) -> int:
+    """Seconds of the night across a period's start that fell inside the period.
+
+    Counted from the period's start to the night's end, both Fi's own, and
+    never more than Fi's total for that night. A night that does not straddle
+    the start -- the wrong one, or one that began inside the period and is
+    already in Fi's total -- adds nothing.
+    """
+    if not _is_concrete(raw):
+        return 0
+    begin = _as_datetime(raw.get("sleepStart"))
+    end = _as_datetime(raw.get("sleepEnd"))
+    if begin is None or end is None or not begin < period_start < end:
+        return 0
+    inside = int((min(end, now) - period_start).total_seconds())
+    total = _as_int(raw.get("sleepSeconds"))
+    return max(0, inside if total is None else min(inside, total))
+
+
 def _is_settled(raw: dict | None, now: datetime) -> bool:
     """Whether a summary's end has stood still long enough to be over.
 
     An unfinished night comes back either as UnavailableOvernightRestSummary or
     as a concrete summary whose sleepEnd follows the collar's latest upload,
-    from midnight until the dog gets up. Only an end that has stopped moving
+    from midnight until the pet gets up. Only an end that has stopped moving
     can mark the night as over; for the newest night, `_got_up_after` also
     asks whether the collar could have moved it.
     """
@@ -118,9 +137,9 @@ def _is_settled(raw: dict | None, now: datetime) -> bool:
 
 
 def _got_up_after(raw: dict, rest_raw: dict | None, midnight: datetime, now: datetime) -> bool:
-    """Whether today's rest bar shows the dog up after the night's end.
+    """Whether today's rest bar shows the pet up after the night's end.
 
-    Fi's end stops moving both when the dog gets up and when the collar cannot
+    Fi's end stops moving both when the pet gets up and when the collar cannot
     upload -- out of range, switched off, flat, or back but not yet synced. In
     the second case Fi keeps drawing rest up to the present, so only a stretch
     after the end that is not rest -- awake, active, or the collar taken off --
@@ -143,7 +162,7 @@ def _got_up_after(raw: dict, rest_raw: dict | None, midnight: datetime, now: dat
     # Fi's bar runs to the present, padded past it now and then.
     horizon = min(max((stop for _, _, stop in spans), default=0.0), (now - midnight).total_seconds())
     # The bar is today's. An end before midnight -- the collar went quiet in
-    # the evening -- leaves nothing on it to read as the dog being up.
+    # the evening -- leaves nothing on it to read as the pet being up.
     cursor = max(0.0, (end - midnight).total_seconds())
     for start, stop in sorted((start, stop) for kind, start, stop in spans if kind == "EVENT"):
         if stop <= cursor:
@@ -339,7 +358,7 @@ def build_day_phases(
     reported = min(max((end for _, end in spans), default=0), max(0, now_min))
     # Fi moves the activity bar on to a new minute some seconds before the rest
     # bar, so for one poll a rest still running ends a minute short and that
-    # minute reads as a stir. It waits for the rest bar; a dog that really got
+    # minute reads as a stir. It waits for the rest bar; a pet that really got
     # up shows one minute later.
     rest_end = max(
         (span[1] for item in rest if item.get("intervalType") == "EVENT" and (span := _span(item)) is not None),
@@ -395,6 +414,7 @@ class Pet:
     last_night_end: datetime | None = None
     night_in_progress: bool = False
     tonight_start: datetime | None = None
+    period_starts: dict[str, datetime] = field(default_factory=dict)
     day_segments: tuple[DaySegment, ...] = ()
     stats: dict[str, Stats] = field(default_factory=dict)
     behavior_events: dict[str, list[datetime]] = field(default_factory=dict)
@@ -425,11 +445,20 @@ class Pet:
         data = data or {}
         pet_raw = data.get("pet") or {}
         self._apply_location(pet_raw.get("ongoingActivity"))
+        self._apply_overnight(
+            pet_raw.get("lastNight"), pet_raw.get("priorNight"), data.get("restTimeline"), midnight, now
+        )
         stats: dict[str, Stats] = {}
         for period in PERIODS:
             prefix = period.lower()
-            steps, goal, distance, active_s = _parse_activity(pet_raw.get(f"{prefix}Activity"))
+            activity_raw = pet_raw.get(f"{prefix}Activity")
+            steps, goal, distance, active_s = _parse_activity(activity_raw)
             sleep_s, nap_s = _parse_rest(pet_raw.get(f"{prefix}Rest"))
+            # Fi's own start of the period; the week is whatever Fi says it is.
+            if (start := _as_datetime((activity_raw or {}).get("start"))) is not None:
+                self.period_starts[period] = start
+            if sleep_s is not None and start is not None and period in BOUNDARY_NIGHTS:
+                sleep_s += self._boundary_sleep(pet_raw.get(BOUNDARY_NIGHTS[period]), start, stats, midnight, now)
             stats[period] = Stats(
                 steps=steps,
                 goal=goal,
@@ -439,9 +468,6 @@ class Pet:
                 active_s=active_s,
             )
         self.stats = stats
-        self._apply_overnight(
-            pet_raw.get("lastNight"), pet_raw.get("priorNight"), data.get("restTimeline"), midnight, now
-        )
         self.tonight_start = _tonight_start(pet_raw.get("tonight"), midnight)
         self.behavior_events = parse_behavior_trends(data.get("getPetHealthTrendsForPet"), midnight, now)
         self.day_segments = build_day_phases(
@@ -451,6 +477,20 @@ class Pet:
             self._evening_window(midnight),
             int((now - midnight).total_seconds() // 60),
         )
+
+    def _boundary_sleep(
+        self, raw: dict | None, period_start: datetime, stats: dict[str, Stats], midnight: datetime, now: datetime
+    ) -> int:
+        """What the night across a period's start adds to that period's sleep.
+
+        On the period's first morning Fi may still answer Unavailable for the
+        night in progress. Until it has an end, Fi's daily sleep is that night
+        clipped at midnight, which is the period's start.
+        """
+        if _is_concrete(raw) or not self.night_in_progress or period_start != midnight:
+            return _boundary_sleep(raw, period_start, now)
+        daily = stats.get("DAILY")
+        return (daily.sleep_s if daily else None) or 0
 
     def _evening_window(self, midnight: datetime) -> tuple[int, int] | None:
         """Tonight's night as [start, end of day), once Fi has started it.
@@ -468,7 +508,7 @@ class Pet:
         The evening that began the night is always yesterday's bar; only what
         fell after local midnight is today's.
 
-        While the night is still running the dog is *in* it, so every minute of
+        While the night is still running the pet is *in* it, so every minute of
         rest since midnight belongs to it -- the timeline stops at the present
         anyway, so the open end cannot over-claim. Once the night settles,
         sleepEnd bounds it exactly.
@@ -510,7 +550,7 @@ class Pet:
     ) -> None:
         """Take the newest settled night, and note when none of them has ended.
 
-        Between local midnight and the moment the dog wakes, the newest
+        Between local midnight and the moment the pet wakes, the newest
         candidate is the night still in progress and the one before it is the
         night just finished. Fi says so with UnavailableOvernightRestSummary or
         with a concrete summary whose end is still moving; absent is neither.

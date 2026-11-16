@@ -116,7 +116,7 @@ def test_no_sensor_is_a_counter():
 def test_day_phase_holds_the_night_over_midnight():
     """Today's bar reports nothing in its first minute, since the minute in
     progress never counts. The night does not blink to unknown meanwhile."""
-    pet = Pet(pet_id="p1", name="Scottie")
+    pet = Pet(pet_id="p1", name="Rex")
     coordinator = SimpleNamespace(data=SimpleNamespace(get_pet=lambda _: pet))
     sensor = PetDayPhaseSensor(coordinator, pet)
 
@@ -142,6 +142,6 @@ def test_day_phase_holds_the_night_over_midnight():
 
 
 def test_day_phase_is_unknown_until_fi_reports_anything():
-    pet = Pet(pet_id="p1", name="Scottie")
+    pet = Pet(pet_id="p1", name="Rex")
     coordinator = SimpleNamespace(data=SimpleNamespace(get_pet=lambda _: pet))
     assert PetDayPhaseSensor(coordinator, pet).native_value is None

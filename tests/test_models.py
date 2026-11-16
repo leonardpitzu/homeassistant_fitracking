@@ -1,7 +1,7 @@
 """Tests for parsing Fi's GraphQL payloads.
 
 The central guarantee: absent data must stay None. pytryfi zeroed sleep and nap
-before parsing and swallowed failures, which made "Fi sent nothing" and "the dog
+before parsing and swallowed failures, which made "Fi sent nothing" and "the pet
 slept nothing" the same value.
 """
 
@@ -50,7 +50,7 @@ def _detail(**overrides):
 
 
 def _pet(detail=None, trends=None, now=NOW, **root):
-    pet = Pet.parse_profile({"id": "p1", "name": "Scottie", "breed": {"name": "Corgi"}})
+    pet = Pet.parse_profile({"id": "p1", "name": "Rex", "breed": {"name": "Mixed"}})
     payload = {
         "pet": detail if detail is not None else _detail(),
         "getPetHealthTrendsForPet": trends,
@@ -163,7 +163,7 @@ def test_a_night_is_settled_once_its_end_stops_moving():
 
 
 def test_a_brief_stir_on_waking_does_not_settle_the_night():
-    """Fi's end stands still while the dog stirs; under the tolerance it is still night."""
+    """Fi's end stands still while the pet stirs; under the tolerance it is still night."""
     now = MIDNIGHT + timedelta(hours=7, minutes=50)
     stirring = _overnight(40306, start="2026-09-18T20:38:00.000Z", end="2026-09-19T07:43:56.000Z")
     pet = _pet(_detail(lastNight=stirring, priorNight=PRIOR_NIGHT), now=now)
@@ -172,7 +172,7 @@ def test_a_brief_stir_on_waking_does_not_settle_the_night():
 
 
 class TestNightEndVersusQuietCollar:
-    """Fi's end stops moving when the dog gets up, and when the collar cannot upload.
+    """Fi's end stops moving when the pet gets up, and when the collar cannot upload.
 
     Only the first ends the night. In the second Fi keeps drawing rest up to the
     present, so the rest bar tells the two apart. The shapes are from 23 Oct
@@ -212,7 +212,7 @@ class TestNightEndVersusQuietCollar:
         pet = self._at(timedelta(hours=2, minutes=25), "2026-09-19T02:24:28.000Z", [_interval("EVENT", 0, 145)])
         self.assert_running(pet)
 
-    def test_a_dog_that_got_up_ends_the_night_after_the_usual_wait(self):
+    def test_a_pet_that_got_up_ends_the_night_after_the_usual_wait(self):
         """Today, 14 Nov: rest to 08:30:06, nine minutes up, then rest again."""
         rest = [_interval("EVENT", 0, 510), _interval("NOTHING", 510, 9), _interval("EVENT", 519, 30)]
         end = "2026-09-19T08:30:06.000Z"
@@ -241,7 +241,7 @@ class TestNightEndVersusQuietCollar:
     def test_a_collar_quiet_since_the_evening_keeps_the_night_past_midnight(self):
         """25 Oct: just after midnight Fi's end was 23:58, before today's bar began.
 
-        Those minutes are on yesterday's bar, not time the dog was up. Read as
+        Those minutes are on yesterday's bar, not time the pet was up. Read as
         up, a collar quiet since 23:40 ended the night at 00:00 and showed the
         partial night as Last Night Sleep until it uploaded again.
         """
@@ -249,7 +249,7 @@ class TestNightEndVersusQuietCollar:
         for minutes in (1, 15, 30):
             self.assert_running(self._at(timedelta(minutes=minutes), end, [_interval("EVENT", 0, minutes)]))
 
-    def test_a_dog_up_since_before_midnight_still_ends_it(self):
+    def test_a_pet_up_since_before_midnight_still_ends_it(self):
         rest = [_interval("NOTHING", 0, 30)]
         self.assert_over(self._at(timedelta(minutes=30), "2026-09-18T23:50:00.000Z", rest))
 
@@ -420,7 +420,7 @@ class TestDayPhases:
         assert all(item.phase != PHASE_NIGHT_SLEEP for item in pet.day_segments)
 
     def test_a_night_still_running_counts_as_night_sleep(self):
-        """Fi answers Unavailable until the night ends: the dog is still in it.
+        """Fi answers Unavailable until the night ends: the pet is still in it.
 
         Without this the early hours read as day rest every single morning, and
         then silently turn into night sleep once Fi settles the night.
@@ -478,7 +478,7 @@ class TestDayPhases:
             (PHASE_NO_DATA, 28, DAY_MINUTES - 28),
         ]
 
-    def test_a_dog_that_got_up_shows_a_minute_later(self):
+    def test_a_pet_that_got_up_shows_a_minute_later(self):
         """Holding the newest minute back delays a real stir; it does not hide it."""
         segments = self._rest_until(28, 30, 30).day_segments
         assert [(item.phase, item.start_min, item.minutes) for item in segments][:2] == [
@@ -513,7 +513,7 @@ class TestDayPhases:
         )
 
     def test_tonights_night_starts_where_fi_put_it(self):
-        """Fi backdates the night to when the dog lay down, but never before
+        """Fi backdates the night to when the pet lay down, but never before
         20:00; the rest before that stays the nap Fi counts it as."""
         pet = self._evening(_overnight(3600, start="2026-09-19T20:00:00.000Z", end="2026-09-19T23:00:00.000Z"))
         assert [(item.phase, item.start_min, item.minutes) for item in pet.day_segments][-3:] == [
@@ -643,3 +643,84 @@ class TestBehaviorTrends:
     def test_an_event_moments_ago_is_kept(self):
         just_after = MIDNIGHT + timedelta(seconds=5510, minutes=1)
         assert len(parse_behavior_trends(self.PAYLOAD, MIDNIGHT, just_after)["cleaning_self"]) == 2
+
+
+# MIDNIGHT is a Saturday; the week below began on the Monday before it.
+WEEK_START = "2026-09-14T00:00:00.000Z"
+BOUNDARY_NIGHT = _overnight(40000, start="2026-09-13T20:00:00.000Z", end="2026-09-14T06:30:00.000Z")
+
+
+def _week(week_eve, *, start=WEEK_START, sleep=98805, **overrides):
+    activity = {"start": start, "totalSteps": 26742, "stepGoal": 112000, "totalDistance": 2546}
+    return _detail(weeklyActivity=activity, weeklyRest=_rest(sleep, 35943), weekEve=week_eve, **overrides)
+
+
+def test_the_night_across_the_week_start_counts_from_the_start():
+    """Fi files that night under the week it began in, so the new week lacks
+    the part after midnight: 00:00 to 06:30 here."""
+    pet = _pet(_week(BOUNDARY_NIGHT))
+    assert pet.stats["WEEKLY"].sleep_s == 98805 + 6 * 3600 + 1800
+    assert pet.stats["WEEKLY"].nap_s == 35943
+    assert pet.period_starts["WEEKLY"] == datetime(2026, 9, 14, tzinfo=UTC)
+
+
+def test_the_month_gets_its_own_boundary_night():
+    activity = {"start": WEEK_START, "totalSteps": 1, "stepGoal": 2, "totalDistance": 3}
+    pet = _pet(_detail(monthlyActivity=activity, monthEve=BOUNDARY_NIGHT))
+    assert pet.stats["MONTHLY"].sleep_s == 98805 + 6 * 3600 + 1800
+    assert pet.stats["WEEKLY"].sleep_s == 98805
+
+
+def test_a_boundary_night_adds_no_more_than_fi_counted_for_it():
+    night = _overnight(3600, start="2026-09-13T20:00:00.000Z", end="2026-09-14T06:30:00.000Z")
+    assert _pet(_week(night)).stats["WEEKLY"].sleep_s == 98805 + 3600
+
+
+@pytest.mark.parametrize(
+    "night",
+    [
+        None,
+        UNAVAILABLE,
+        # Began inside the week: already in Fi's total.
+        _overnight(40000, start="2026-09-14T20:00:00.000Z", end="2026-09-15T06:00:00.000Z"),
+        # Ended before the week began: the wrong night was asked for.
+        _overnight(40000, start="2026-09-12T20:00:00.000Z", end="2026-09-13T06:00:00.000Z"),
+    ],
+)
+def test_a_night_that_does_not_straddle_the_start_adds_nothing(night):
+    assert _pet(_week(night)).stats["WEEKLY"].sleep_s == 98805
+
+
+def test_without_fis_period_start_nothing_is_added():
+    pet = _pet(_detail(weekEve=BOUNDARY_NIGHT))
+    assert pet.stats["WEEKLY"].sleep_s == 98805
+    assert pet.period_starts == {}
+
+
+def test_the_daily_total_never_gets_a_boundary_night():
+    activity = {"start": WEEK_START, "totalSteps": 1, "stepGoal": 2, "totalDistance": 3}
+    pet = _pet(_week(BOUNDARY_NIGHT, dailyActivity=activity, dailyRest=_rest(500, 0)))
+    assert pet.stats["DAILY"].sleep_s == 500
+
+
+def test_a_running_boundary_night_counts_up_to_now():
+    """On the week's first morning the night's end follows the collar."""
+    start = "2026-09-19T00:00:00.000Z"
+    night = _overnight(30000, start="2026-09-18T20:00:00.000Z", end="2026-09-19T05:00:00.000Z")
+    now = MIDNIGHT + timedelta(hours=5, minutes=1)
+    pet = _pet(_week(night, start=start, sleep=0, lastNight=night), now=now)
+    assert pet.stats["WEEKLY"].sleep_s == 5 * 3600
+
+
+def test_an_unavailable_running_night_counts_as_fis_daily_sleep():
+    """While Fi gives the night in progress no end, its daily sleep is that
+    night clipped at midnight -- the week's start."""
+    start = "2026-09-19T00:00:00.000Z"
+    detail = _week(UNAVAILABLE, start=start, sleep=0, lastNight=UNAVAILABLE, dailyRest=_rest(17000, 0))
+    pet = _pet(detail, now=MIDNIGHT + timedelta(hours=5))
+    assert pet.stats["WEEKLY"].sleep_s == 17000
+
+
+def test_daily_sleep_stands_in_only_on_the_periods_first_day():
+    detail = _week(UNAVAILABLE, sleep=1000, lastNight=UNAVAILABLE, dailyRest=_rest(17000, 0))
+    assert _pet(detail, now=MIDNIGHT + timedelta(hours=5)).stats["WEEKLY"].sleep_s == 1000

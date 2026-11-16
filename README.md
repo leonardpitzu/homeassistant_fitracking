@@ -37,7 +37,7 @@ Assistant's 10% reset tolerance is relative — so a 30 m correction to a 50 m
 morning walk reads as a counter reset and adds a phantom cycle to the sum.
 
 `Sleep` and `Nap` are whole minutes, which is how they have always been shown.
-While the dog sleeps, Fi counts the seconds up with the clock between the
+While the pet sleeps, Fi counts the seconds up with the clock between the
 collar's uploads, so fractions of a minute made a new recorder row on every poll
 and carried nothing that was ever displayed. A half minute rounds up, as the
 display does.
@@ -52,41 +52,62 @@ Fi exposes rest twice. `restSummaryFeed` files a whole session under the local
 day it **began** and never splits it, so its daily bucket reports `0` sleep for
 as long as the current night started yesterday. The Fi app does not show that
 number, and neither does this integration: `Sleep` and `Nap` read `restFeed`,
-whose totals are clipped at the period boundary. A night running 21:19 → 08:34
+whose daily total is clipped at midnight. A night running 21:19 → 08:34
 contributes its portion before midnight to yesterday and the 8h 30m after it to
-today — for `daily`, `weekly` and `monthly` alike. `Steps`, `Distance` and
-`Goal` were already calendar-aligned.
+today. `Steps`, `Distance` and `Goal` were already calendar-aligned.
+
+Fi's weekly and monthly rest totals are not clipped the same way: a night is
+counted whole in the week or month it **began** in. On the first morning of a
+week or month the night just slept would therefore count nowhere in the new
+period, and `Weekly Sleep` would read `0` until the next evening. The
+integration adds the missing part back: the stretch of that one night from the
+period's start to the night's end, both taken from Fi's own overnight summary
+and never more than Fi's total for the night. While that night is still running
+and Fi has given it no end yet, Fi's daily sleep stands in for it — it is the
+same night, clipped at the same midnight. Nothing else is added to or taken
+from Fi's totals.
+
+Where a week starts is Fi's decision, not Home Assistant's and not this
+integration's: the period start is read from Fi's activity summary on every
+refresh. Fi starts its week on Monday, which is also where Home Assistant's own
+weekly statistics start; the first day of the week in a user's profile only
+changes how calendars are displayed.
+
+Two small differences remain and are Fi's own. The added stretch runs from the
+period's start to the night's end, so a stir inside it counts as sleep. And Fi
+does not always file a rest the same way in its daily and its weekly total — a
+doze straight after getting up can be sleep in one and a nap in the other — so
+the daily figures of a week do not add up exactly to the weekly one.
 
 So a `0` is a real `0`, and every period answers the same question the app does:
-what did the dog do *in this day, this week, this month*.
+what did the pet do *in this day, this week, this month*.
 
 Two sensors cover what a calendar period cannot say on its own:
 
 | Sensor | Meaning |
 |---|---|
 | `Last Night Sleep` | The night as one unbroken session, uncut by midnight — Fi's settled overnight total. Keyed by the evening the night began, so the integration asks Fi for both candidate evenings and reports the most recent one that has finished. `unknown` only when neither has, with `sleep_start` / `sleep_end` attributes. All three values are Fi's own, unaltered. |
-| `Resting Since` | Timestamp Fi's current `OngoingRest` began, or `unknown` while the pet is on a walk. Fi means "settled at a place" here, not "asleep", so this keeps running after the dog wakes up. |
+| `Resting Since` | Timestamp Fi's current `OngoingRest` began, or `unknown` while the pet is on a walk. Fi means "settled at a place" here, not "asleep", so this keeps running after the pet wakes up. |
 
-From midnight until the dog wakes, Fi reports the night in progress as if it were
+From midnight until the pet wakes, Fi reports the night in progress as if it were
 finished, with `sleepEnd` following the collar's latest upload and the total
 growing with it. That is not last night, so it is not shown: the night counts as
 finished once Fi's `sleepEnd` has stood still for 15 minutes, and until then the
 sensor keeps the night before. On waking, Fi trims the end back by a few seconds
 and never moves it again, so the switch happens about a quarter of an hour after
-the dog gets up, and it shows Fi's final figures.
+the pet gets up, and it shows Fi's final figures.
 
 The end also stands still when the collar cannot upload — out of range, switched
-off, flat, or back but not yet synced — and that is not the dog getting up. Fi
+off, flat, or back but not yet synced — and that is not the pet getting up. Fi
 tells the two apart on its own rest bar: while the collar is quiet it keeps
-drawing rest up to the present, and once the dog is up the bar shows something
+drawing rest up to the present, and once the pet is up the bar shows something
 other than rest after the night's end — awake, active, or the collar taken off.
 So a night also needs that before it counts as finished. Only today's bar is
 read: when the collar went quiet before midnight, the minutes from its end to
-midnight are on yesterday's bar and are not the dog being up. Fi pads the last
-rest a few minutes past the end now and then, which the 15 minutes already cover: over
-30 mornings the switch came at the same moment as with the end alone, and the
-two collar silences of 23 October, which the end alone would have read as the
-dog getting up, kept the night running. Nothing is remembered between polls, so
+midnight are on yesterday's bar and are not the pet being up. Fi pads the last
+rest a few minutes past the end now and then, which the 15 minutes already
+cover. A collar silence, which the end alone would read as the pet getting up,
+keeps the night running. Nothing is remembered between polls, so
 a restart changes nothing, and an answer from Fi without the rest bar falls back
 to the end alone.
 
@@ -101,7 +122,7 @@ day carries exactly one phase**, so the six always add up to 1440.
 |---|---|
 | `night_sleep` | Rest belonging to a night rather than to the day — last night's tail after midnight, and the next night once Fi has started it |
 | `day_sleep` | Any other rest |
-| `active` | Fi judged the dog active — walks and everything else |
+| `active` | Fi judged the pet active — walks and everything else |
 | `idle` | Reporting, but neither resting nor active. Usually empty: Fi pads every activity event to ~12 minutes, which swallows the short gaps between rests |
 | `offline` | Collar off or charging; nothing is knowable here |
 | `no_data` | The part of the day Fi has not reported on yet |
@@ -133,19 +154,19 @@ stat sensor carries Fi's own figure. The same stretching reaches past the presen
 alternates padded and unpadded answers within seconds — so the bar stops at the
 present: anything later is `no_data`. The newest minute also waits for the rest
 bar: Fi moves the activity bar on to a new minute about ten seconds earlier, which
-would otherwise show a rest still running as a one-minute stir. A dog that really
+would otherwise show a rest still running as a one-minute stir. A pet that really
 got up shows a minute later instead.
 
 A day is night, day, next night, and a night always straddles two bars: its
 evening hours belong to the day it began, its remaining hours to the next one.
 Both ends are Fi's own; the integration does not decide where a night lies. The
 morning one is bounded by the settled session's `sleepEnd`, or left open while
-the dog is still *in* that night: Fi answers `Unavailable`, keeps moving
+the pet is still *in* that night: Fi answers `Unavailable`, keeps moving
 `sleepEnd` with every upload, or the collar has gone quiet (see `Last Night
 Sleep` above). The evening one comes from Fi's overnight summary for today's
 date, which is `Unavailable` until Fi starts the night and then carries the
 start Fi gave it. Fi does that once a rest reaching past 20:00 has gone on for
-about an hour, and backdates the night to when the dog lay down — never earlier
+about an hour, and backdates the night to when the pet lay down — never earlier
 than 20:00. Until then the evening rest is `day_sleep`, as Fi counts it; once
 Fi starts the night the state turns `night_sleep` and the bar redraws from the
 backdated start. `Daily Nap` drops and `Daily Sleep` rises by the same minutes
@@ -154,15 +175,14 @@ evening — its last value of the day is Fi's final figure.
 
 A nap straight after getting up shows as `night_sleep` until the night settles,
 then as `day_sleep`. Until then Fi may still carry the night on over it, as it
-does over a stir, and its answers cannot tell the two apart any sooner: over 30
-mornings, a stir differed from a nap only in Fi moving the end one poll after
-redrawing the bar.
+does over a stir, and its answers cannot tell the two apart any sooner: a stir
+differs from a nap only in Fi moving the end one poll after redrawing the bar.
 
 Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `max`:
 
 ```yaml
 type: statistics-graph
-entities: [sensor.scottie_daily_distance]
+entities: [sensor.rex_daily_distance]
 period: day
 stat_types: [max]
 chart_type: bar
@@ -690,11 +710,12 @@ Bluetooth range.
 | Domain renamed `tryfi` → `fitracking` | Matches Fi's rebrand to fitracking.com |
 | **`pytryfi` dependency removed** | The library called `sentry_sdk.init()` with a hardcoded third-party DSN inside `PyTryFi.__init__`, which configures the **global** Sentry client for the whole Home Assistant process ([pytryfi#32](https://github.com/sbabcock23/pytryfi/issues/32), [hass-tryfi#115](https://github.com/sbabcock23/hass-tryfi/issues/115)). PyPI is also frozen at 0.0.21, so upstream fixes were unreachable ([pytryfi#43](https://github.com/sbabcock23/pytryfi/issues/43)) |
 | Async-native client | Every call went through `async_add_executor_job`; LED and Lost Mode writes ran blocking HTTP on the event loop |
-| Absent data reads `unknown` | `setRestStats` zeroed sleep and nap *before* parsing and swallowed failures, so "Fi sent nothing" was indistinguishable from "the dog slept nothing" ([hass-tryfi#89](https://github.com/sbabcock23/hass-tryfi/issues/89)) |
+| Absent data reads `unknown` | `setRestStats` zeroed sleep and nap *before* parsing and swallowed failures, so "Fi sent nothing" was indistinguishable from "the pet slept nothing" ([hass-tryfi#89](https://github.com/sbabcock23/hass-tryfi/issues/89)) |
 | Session re-authentication | Nothing ever logged back in once Fi expired the session, which needed a manual reload ([hass-tryfi#91](https://github.com/sbabcock23/hass-tryfi/issues/91)) |
 | Reauth flow | Bad credentials now prompt for a new password instead of failing setup |
 | Account email no longer polled | The device fragment pulled `UserDetails` — email, phone — into every refresh |
 | Rest clipped to the calendar period | Upstream read `restSummaryFeed`, which files a night under the day it began, so `Daily Sleep` showed `0` all morning while the app showed the night's hours |
+| Weekly and monthly sleep include the night across the period start | Fi counts a night whole in the week or month it began in, so the first morning of a period showed `0` sleep until the next evening |
 | `Last Night Sleep` and `Resting Since` | A calendar day splits a night in two; neither sensor exists upstream |
 | Goal sensors added | Upstream left `# FUTURE COULD INCLUDE STEP GOAL`; the values were already available |
 | Migrated to `SensorEntity` | Entities inherited plain `Entity`, so no `state_class` was possible and no long-term statistics were recorded |

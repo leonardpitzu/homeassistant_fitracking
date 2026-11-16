@@ -28,7 +28,7 @@ async def async_setup_entry(hass, config_entry, async_add_devices):
 
 
 class FiLostMode(FiPetEntity, SelectEntity):
-    """Puts the collar into Fi's lost-dog mode."""
+    """Puts the collar into Fi's lost-pet mode."""
 
     _attr_options = [SAFE, LOST]
 

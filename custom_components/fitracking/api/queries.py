@@ -82,8 +82,11 @@ query {
 #
 # Rest comes from restFeed, not restSummaryFeed: restSummaryFeed files a whole
 # session under the local day it BEGAN, so its daily bucket reads SLEEP 0 for as
-# long as the current night started yesterday. restFeed's totals are clipped at
-# the period boundary, which is what the Fi app shows for the day, week and month.
+# long as the current night started yesterday. restFeed clips the DAY total at
+# midnight. Its WEEK and MONTH totals do not: a night is filed whole under the
+# period it began in, so the one across a period's start is missing from the new
+# period. weekEve and monthEve fetch that night, keyed by the evening before the
+# period began, and the period's own `start` comes with the activity summary.
 #
 # Fi keys a night by the evening it BEGAN, so last night lives under yesterday's
 # date from the moment it settles -- and under the day before that between local
@@ -91,7 +94,10 @@ query {
 # starting this evening: Unavailable until Fi starts it, then concrete with the
 # start Fi gave it. All three are asked for in the one round trip.
 PET_DETAIL = """
-query PetDetail($petId: ID!, $tonight: DateTime!, $lastNight: DateTime!, $priorNight: DateTime!) {
+query PetDetail(
+  $petId: ID!, $tonight: DateTime!, $lastNight: DateTime!, $priorNight: DateTime!,
+  $weekEve: DateTime!, $monthEve: DateTime!
+) {
   pet(id: $petId) {
     ongoingActivity {
       __typename
@@ -113,6 +119,8 @@ query PetDetail($petId: ID!, $tonight: DateTime!, $lastNight: DateTime!, $priorN
     tonight: overnightRestSummary(date: $tonight) { ...OvernightDetails }
     lastNight: overnightRestSummary(date: $lastNight) { ...OvernightDetails }
     priorNight: overnightRestSummary(date: $priorNight) { ...OvernightDetails }
+    weekEve: overnightRestSummary(date: $weekEve) { ...OvernightDetails }
+    monthEve: overnightRestSummary(date: $monthEve) { ...OvernightDetails }
   }
   getPetHealthTrendsForPet(petId: $petId, period: DAY) {
     behaviorTrends {
@@ -156,6 +164,7 @@ fragment OvernightDetails on OvernightRestSummary {
 }
 
 fragment ActivitySummaryDetails on ActivitySummary {
+  start
   totalSteps
   stepGoal
   totalDistance

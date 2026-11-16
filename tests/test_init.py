@@ -18,9 +18,9 @@ ENTRY_DATA = {"username": "me@example.com", "password": "secret", "polling": "10
 def _fi_data() -> FiData:
     pet = Pet(
         pet_id="p1",
-        name="Scottie",
-        breed="Corgi",
-        photo_url="https://example.invalid/scottie.jpg",
+        name="Rex",
+        breed="Mixed",
+        photo_url="https://example.invalid/rex.jpg",
         device=Device(
             device_id="d1",
             module_id="m1",
@@ -83,16 +83,16 @@ async def test_entry_unloads_cleanly(hass, mock_client):
 @pytest.mark.parametrize(
     ("entity_id", "expected"),
     [
-        ("sensor.scottie_collar_battery_level", "77"),
-        ("sensor.scottie_weekly_sleep", "1647"),  # 98805s -> whole minutes
-        ("sensor.scottie_weekly_nap", "599"),  # 35943s
-        ("sensor.scottie_weekly_distance", "2.55"),  # unchanged: 2546 m -> km
-        ("sensor.scottie_last_night_sleep", "663.72"),
-        ("sensor.scottie_connected_to", "base"),
-        ("sensor.scottie_current_place_name", "Home"),
+        ("sensor.rex_collar_battery_level", "77"),
+        ("sensor.rex_weekly_sleep", "1647"),  # 98805s -> whole minutes
+        ("sensor.rex_weekly_nap", "599"),  # 35943s
+        ("sensor.rex_weekly_distance", "2.55"),  # unchanged: 2546 m -> km
+        ("sensor.rex_last_night_sleep", "663.72"),
+        ("sensor.rex_connected_to", "base"),
+        ("sensor.rex_current_place_name", "Home"),
         ("sensor.kitchen_base", "Online"),
-        ("binary_sensor.scottie_collar_battery_charging", "off"),
-        ("select.scottie_lost_mode", "Safe"),
+        ("binary_sensor.rex_collar_battery_charging", "off"),
+        ("select.rex_lost_mode", "Safe"),
     ],
 )
 async def test_entity_states(hass, mock_client, entity_id, expected):
@@ -105,7 +105,7 @@ async def test_entity_states(hass, mock_client, entity_id, expected):
 async def test_the_day_bar_stays_live_but_out_of_the_recorder(hass, mock_client):
     """The Day card draws the live attributes; history only needs the phase."""
     await _setup(hass)
-    state = hass.states.get("sensor.scottie_day_phase")
+    state = hass.states.get("sensor.rex_day_phase")
     assert {"day_minutes", "reported_minutes", "totals", "segments"} <= set(state.attributes)
     assert state.state_info["unrecorded_attributes"] >= {"reported_minutes", "totals", "segments"}
     assert "day_minutes" not in state.state_info["unrecorded_attributes"]
@@ -114,12 +114,12 @@ async def test_the_day_bar_stays_live_but_out_of_the_recorder(hass, mock_client)
 async def test_absent_rest_reads_unknown_not_zero(hass, mock_client):
     """The whole point of the rewrite: no fabricated zeros."""
     await _setup(hass)
-    assert hass.states.get("sensor.scottie_daily_sleep").state == "unknown"
+    assert hass.states.get("sensor.rex_daily_sleep").state == "unknown"
 
 
 async def test_tracker_reports_position(hass, mock_client):
     await _setup(hass)
-    state = hass.states.get("device_tracker.scottie_tracker")
+    state = hass.states.get("device_tracker.rex_tracker")
     assert state.attributes["latitude"] == 45.65
     assert state.attributes["longitude"] == 25.6
 
@@ -128,7 +128,7 @@ async def test_an_unchanged_fix_is_not_written_again(hass, mock_client):
     """TrackerEntity forces every write; a repeated fix must not become a row."""
     entry = await _setup(hass)
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    before = hass.states.get("device_tracker.scottie_tracker")
+    before = hass.states.get("device_tracker.rex_tracker")
     # A repeat mutates last_reported on the very same State object.
     reported_before = before.last_reported
     events = async_capture_events(hass, EVENT_STATE_CHANGED)
@@ -136,7 +136,7 @@ async def test_an_unchanged_fix_is_not_written_again(hass, mock_client):
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
-    after = hass.states.get("device_tracker.scottie_tracker")
+    after = hass.states.get("device_tracker.rex_tracker")
     assert not [event for event in events if event.data["entity_id"] == after.entity_id]
     assert after.last_changed == before.last_changed
     assert after.last_reported > reported_before
@@ -146,7 +146,7 @@ async def test_a_new_fix_is_written_without_resetting_last_changed(hass, mock_cl
     """Same zone, new position: a row for the move, but not a fresh last_changed."""
     entry = await _setup(hass)
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    before = hass.states.get("device_tracker.scottie_tracker")
+    before = hass.states.get("device_tracker.rex_tracker")
     events = async_capture_events(hass, EVENT_STATE_CHANGED)
 
     moved = _fi_data()
@@ -155,7 +155,7 @@ async def test_a_new_fix_is_written_without_resetting_last_changed(hass, mock_cl
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
-    after = hass.states.get("device_tracker.scottie_tracker")
+    after = hass.states.get("device_tracker.rex_tracker")
     assert [event for event in events if event.data["entity_id"] == after.entity_id]
     assert after.attributes["latitude"] == 45.66
     assert after.state == before.state
@@ -172,7 +172,7 @@ async def test_a_brief_outage_keeps_the_last_good_state(hass, mock_client):
     await hass.async_block_till_done()
 
     assert coordinator.last_update_success
-    assert hass.states.get("sensor.scottie_collar_battery_level").state == "77"
+    assert hass.states.get("sensor.rex_collar_battery_level").state == "77"
 
 
 async def test_a_sustained_outage_still_goes_unavailable(hass, mock_client):
@@ -186,11 +186,11 @@ async def test_a_sustained_outage_still_goes_unavailable(hass, mock_client):
     await hass.async_block_till_done()
 
     assert not coordinator.last_update_success
-    assert hass.states.get("sensor.scottie_collar_battery_level").state == "unavailable"
+    assert hass.states.get("sensor.rex_collar_battery_level").state == "unavailable"
 
 
 async def test_behavior_sensor_counts_events(hass, mock_client):
     await _setup(hass)
-    state = hass.states.get("sensor.scottie_barking")
+    state = hass.states.get("sensor.rex_barking")
     assert state.state == "1"
     assert state.attributes["last_event"] == "2026-09-20T01:27:28"

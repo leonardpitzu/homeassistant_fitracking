@@ -22,7 +22,7 @@ HOUSEHOLD = {
         "userHouseholds": [
             {
                 "household": {
-                    "pets": [{"id": "p1", "name": "Scottie", "breed": {"name": "Corgi"}}],
+                    "pets": [{"id": "p1", "name": "Rex", "breed": {"name": "Mixed"}}],
                     "bases": [{"baseId": "b1", "name": "Kitchen", "online": True}],
                 }
             }
@@ -44,6 +44,19 @@ class _Response:
 
     async def __aexit__(self, *exc):
         return False
+
+
+class _FullSession:
+    """Like _Session, but keeps each request whole."""
+
+    def __init__(self, script):
+        self._script = list(script)
+        self.calls = []
+
+    def post(self, url, **kwargs):
+        self.calls.append(json.dumps(kwargs.get("json", {})))
+        status, payload = self._script.pop(0)
+        return _Response(status, payload)
 
 
 class _Session:
@@ -90,7 +103,7 @@ async def test_a_persistent_failure_still_raises():
 
 async def test_a_failed_detail_keeps_the_previous_statistics():
     """The bug: a rebuilt pet had empty stats, so every sensor read `unknown`."""
-    previous_pet = Pet.parse_profile({"id": "p1", "name": "Scottie"})
+    previous_pet = Pet.parse_profile({"id": "p1", "name": "Rex"})
     previous_pet.apply_detail(
         {"pet": {"dailyActivity": {"totalSteps": 1234, "stepGoal": 16000}}},
         MIDNIGHT,
@@ -120,7 +133,7 @@ async def test_a_null_pet_beside_errors_keeps_the_previous_statistics():
     payload and every statistic read `unknown` -- with nothing above DEBUG to
     say why.
     """
-    previous_pet = Pet.parse_profile({"id": "p1", "name": "Scottie"})
+    previous_pet = Pet.parse_profile({"id": "p1", "name": "Rex"})
     previous_pet.apply_detail({"pet": {"dailyActivity": {"totalSteps": 1234}}}, MIDNIGHT, MIDNIGHT)
 
     partial = (200, {"data": {"pet": None}, "errors": [{"message": "internal error"}]})
@@ -135,5 +148,36 @@ async def test_the_profile_is_refreshed_on_a_carried_pet():
     previous_pet = Pet.parse_profile({"id": "p1", "name": "Old Name"})
     client, _ = _client([(200, {"data": HOUSEHOLD})] + [(502, None)] * 3)
     data = await client.async_get_data(MIDNIGHT, FiData(pets=[previous_pet]))
-    assert data.pets[0].name == "Scottie"
-    assert data.pets[0].breed == "Corgi"
+    assert data.pets[0].name == "Rex"
+    assert data.pets[0].breed == "Mixed"
+
+
+def _detail(week_start=None):
+    activity = {"totalSteps": 1} | ({"start": week_start} if week_start else {})
+    return 200, {"data": {"pet": {"weeklyActivity": activity}}}
+
+
+def _eves(call):
+    variables = json.loads(call)["variables"]
+    return variables["weekEve"], variables["monthEve"]
+
+
+async def test_boundary_nights_are_keyed_by_the_calendar_first():
+    """MIDNIGHT is Monday 21 Sep: the week began today, the month on the 1st."""
+    session = _FullSession([(200, {"data": HOUSEHOLD}), _detail()])
+    await FiClient(session, "e", "p").async_get_data(MIDNIGHT)
+    assert _eves(session.calls[1]) == ("2026-09-20T00:00:00.000Z", "2026-08-31T00:00:00.000Z")
+    assert len(session.calls) == 2
+
+
+async def test_fis_own_week_start_is_asked_again_when_it_differs():
+    """A week Fi starts on Sunday needs Saturday's night, not Sunday's."""
+    session = _FullSession([(200, {"data": HOUSEHOLD}), _detail("2026-09-20T00:00:00.000Z"), _detail()])
+    data = await FiClient(session, "e", "p").async_get_data(MIDNIGHT)
+    assert _eves(session.calls[2])[0] == "2026-09-19T00:00:00.000Z"
+    assert len(session.calls) == 3
+
+    # The next refresh starts from Fi's week and needs no second request.
+    session._script.extend([(200, {"data": HOUSEHOLD}), _detail("2026-09-20T00:00:00.000Z")])
+    await FiClient(session, "e", "p").async_get_data(MIDNIGHT, data)
+    assert len(session.calls) == 5

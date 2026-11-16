@@ -10,8 +10,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import PERCENTAGE, UnitOfLength, UnitOfTime
 from homeassistant.helpers.icon import icon_for_battery_level
 
-from .api import DAY_MINUTES, PHASES
-from .api.models import PHASE_NO_DATA
+from .api import DAY_MINUTES, PHASE_NO_DATA, PHASES
 from .const import (
     BEHAVIOR_META,
     CONNECTION_ICONS,
@@ -54,7 +53,7 @@ STAT_META = {
         "unit": UnitOfTime.MINUTES,
         "divisor": 60,
         "precision": 0,
-        # While the dog sleeps Fi counts the seconds up with the clock between
+        # While the pet sleeps Fi counts the seconds up with the clock between
         # uploads, so fractions of a minute were a new recorder row every poll
         # carrying nothing that is ever shown: the display is whole minutes.
         "whole": True,

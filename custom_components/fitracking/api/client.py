@@ -15,7 +15,7 @@ from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeo
 
 from . import queries
 from .exceptions import FiAuthError, FiConnectionError, FiTransientError
-from .models import Base, FiData, Pet
+from .models import BOUNDARY_NIGHTS, Base, FiData, Pet
 
 LOGGER = logging.getLogger(__name__)
 
@@ -148,12 +148,19 @@ class FiClient:
         return FiData(pets=pets, bases=bases)
 
     async def _async_pet_detail(self, pet: Pet, midnight: datetime, nights: dict[str, str]) -> None:
-        data = await self._async_graphql(queries.PET_DETAIL, {"petId": pet.pet_id} | nights)
-        # Fi can answer with errors alongside a null pet. That is a failed
-        # refresh, not a pet with nothing to report.
-        if not data.get("pet"):
-            raise FiConnectionError("Fi returned no detail for this pet")
-        pet.apply_detail(data, midnight, datetime.now(UTC))
+        # The nights across the week's and month's start are keyed by Fi's own
+        # period starts, which only a response carries. The first request goes
+        # out on the calendar's; if Fi's differ, it is asked once more.
+        for _ in range(2):
+            eves = _boundary_eves(pet, midnight)
+            data = await self._async_graphql(queries.PET_DETAIL, {"petId": pet.pet_id} | nights | eves)
+            # Fi can answer with errors alongside a null pet. That is a failed
+            # refresh, not a pet with nothing to report.
+            if not data.get("pet"):
+                raise FiConnectionError("Fi returned no detail for this pet")
+            pet.apply_detail(data, midnight, datetime.now(UTC))
+            if _boundary_eves(pet, midnight) == eves:
+                return
 
     async def async_set_led(self, module_id: str, enabled: bool) -> None:
         await self._async_graphql(
@@ -167,6 +174,20 @@ class FiClient:
     async def async_set_lost_mode(self, module_id: str, lost: bool) -> None:
         mode = queries.PET_MODE_LOST if lost else queries.PET_MODE_NORMAL
         await self._async_graphql(queries.SET_DEVICE_OPS, {"input": {"moduleId": module_id, "mode": mode}})
+
+
+def _boundary_eves(pet: Pet, midnight: datetime) -> dict[str, str]:
+    """The evening before each of the pet's periods began, as Fi keys a night."""
+    calendar = {
+        "WEEKLY": midnight - timedelta(days=midnight.weekday()),
+        "MONTHLY": midnight.replace(day=1),
+    }
+    eves = {}
+    for period, alias in BOUNDARY_NIGHTS.items():
+        start = pet.period_starts.get(period, calendar[period]).astimezone(midnight.tzinfo)
+        eve = (start - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        eves[alias] = _fi_date(eve)
+    return eves
 
 
 def _fi_date(moment: datetime) -> str:
