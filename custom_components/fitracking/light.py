@@ -1,15 +1,12 @@
 """Collar LED light."""
 
-import logging
 import math
 
 from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .entity import FiPetEntity
-
-LOGGER = logging.getLogger(__name__)
+from .entity import FiPetEntity, collared_pets
 
 # Fi's white; used when the collar reports no palette to match against.
 DEFAULT_COLOR_CODE = 8
@@ -21,37 +18,16 @@ def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
 
 
-def calculate_distance(color1, color2) -> float:
-    """Euclidean distance between two RGB colors."""
-    return math.sqrt(sum((c1 - c2) ** 2 for c1, c2 in zip(color1, color2, strict=True)))
-
-
 def find_closest_color_code(target_color, color_list: dict[int, tuple[int, int, int]]) -> int:
     """Return the collar colour code nearest the requested RGB value."""
-    min_distance = float("inf")
-    closest_color_code = DEFAULT_COLOR_CODE
-
-    for code, color in color_list.items():
-        distance = calculate_distance(target_color, color)
-        if distance < min_distance:
-            min_distance = distance
-            closest_color_code = code
-
-    return closest_color_code
+    return min(color_list, key=lambda code: math.dist(target_color, color_list[code]), default=DEFAULT_COLOR_CODE)
 
 
 async def async_setup_entry(hass, config_entry, async_add_devices):
     """Add lights for passed config_entry in HA."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
 
-    new_devices = []
-    for pet in coordinator.data.pets:
-        if pet.device is None:
-            LOGGER.warning("Skipping pet %s: no collar paired", pet.name)
-            continue
-        new_devices.append(FiPetLight(coordinator, pet))
-    if new_devices:
-        async_add_devices(new_devices)
+    async_add_devices(FiPetLight(coordinator, pet) for pet in collared_pets(coordinator))
 
 
 class FiPetLight(FiPetEntity, LightEntity):

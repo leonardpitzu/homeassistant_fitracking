@@ -34,8 +34,8 @@ def _fi_data() -> FiData:
             mode="NORMAL",
         ),
         activity_type="OngoingRest",
-        latitude=45.65,
-        longitude=25.6,
+        latitude=10.5,
+        longitude=20.5,
         place_name="Home",
         place_address="Somewhere",
         resting_since=datetime(2026, 9, 19, 17, 15, tzinfo=UTC),
@@ -120,8 +120,8 @@ async def test_absent_rest_reads_unknown_not_zero(hass, mock_client):
 async def test_tracker_reports_position(hass, mock_client):
     await _setup(hass)
     state = hass.states.get("device_tracker.rex_tracker")
-    assert state.attributes["latitude"] == 45.65
-    assert state.attributes["longitude"] == 25.6
+    assert state.attributes["latitude"] == 10.5
+    assert state.attributes["longitude"] == 20.5
 
 
 async def test_an_unchanged_fix_is_not_written_again(hass, mock_client):
@@ -150,14 +150,14 @@ async def test_a_new_fix_is_written_without_resetting_last_changed(hass, mock_cl
     events = async_capture_events(hass, EVENT_STATE_CHANGED)
 
     moved = _fi_data()
-    moved.pets[0].latitude = 45.66
+    moved.pets[0].latitude = 10.6
     mock_client.async_get_data.return_value = moved
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
     after = hass.states.get("device_tracker.rex_tracker")
     assert [event for event in events if event.data["entity_id"] == after.entity_id]
-    assert after.attributes["latitude"] == 45.66
+    assert after.attributes["latitude"] == 10.6
     assert after.state == before.state
     assert after.last_changed == before.last_changed
 

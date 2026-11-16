@@ -1,7 +1,5 @@
 """Sensors for the Fi collar."""
 
-import logging
-
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -20,14 +18,15 @@ from .const import (
     SENSOR_STATS_BY_TIME,
     SENSOR_STATS_BY_TYPE,
 )
-from .entity import FiBaseEntity, FiPetEntity
-
-LOGGER = logging.getLogger(__name__)
+from .entity import FiBaseEntity, FiPetEntity, collared_pets
 
 # "field" names the attribute on api.Stats holding this metric.
-# Nothing here is total_increasing: Fi revises these downward after first
-# reporting them, and HA's 10% reset tolerance is relative, so a small absolute
-# revision early in a period reads as a counter reset.
+# The period totals are `total` with `last_reset` at Fi's own start of the
+# period, so Home Assistant sees the reset for what it is and a day's `change`
+# is that day's figure. Not total_increasing: Fi revises these downward after
+# first reporting them, and HA's 10% reset tolerance is relative, so a small
+# absolute revision early in a period would read as a counter reset. The goal
+# is a target, not a total.
 STAT_META = {
     "STEPS": {
         "field": "steps",
@@ -36,7 +35,7 @@ STAT_META = {
         "divisor": 1,
         "precision": 0,
         "device_class": None,
-        "state_class": SensorStateClass.MEASUREMENT,
+        "state_class": SensorStateClass.TOTAL,
     },
     "DISTANCE": {
         "field": "distance_m",
@@ -45,7 +44,7 @@ STAT_META = {
         "divisor": 1000,
         "precision": 2,
         "device_class": SensorDeviceClass.DISTANCE,
-        "state_class": SensorStateClass.MEASUREMENT,
+        "state_class": SensorStateClass.TOTAL,
     },
     "SLEEP": {
         "field": "sleep_s",
@@ -60,7 +59,7 @@ STAT_META = {
         "device_class": SensorDeviceClass.DURATION,
         # Fi also reclassifies rest between nap and sleep, moving minutes
         # between these two after they were first reported.
-        "state_class": SensorStateClass.MEASUREMENT,
+        "state_class": SensorStateClass.TOTAL,
     },
     "NAP": {
         "field": "nap_s",
@@ -70,7 +69,7 @@ STAT_META = {
         "precision": 0,
         "whole": True,
         "device_class": SensorDeviceClass.DURATION,
-        "state_class": SensorStateClass.MEASUREMENT,
+        "state_class": SensorStateClass.TOTAL,
     },
     "GOAL": {
         "field": "goal",
@@ -90,7 +89,7 @@ STAT_META = {
         "divisor": 60,
         "precision": 0,
         "device_class": SensorDeviceClass.DURATION,
-        "state_class": SensorStateClass.MEASUREMENT,
+        "state_class": SensorStateClass.TOTAL,
     },
 }
 
@@ -106,10 +105,7 @@ async def async_setup_entry(hass, config_entry, async_add_devices):
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
 
     new_devices = []
-    for pet in coordinator.data.pets:
-        if pet.device is None:
-            LOGGER.warning("Skipping pet %s: no collar paired", pet.name)
-            continue
+    for pet in collared_pets(coordinator):
         new_devices.append(FiBatterySensor(coordinator, pet))
         new_devices.append(PetLastNightSleepSensor(coordinator, pet))
         new_devices.append(PetRestingSinceSensor(coordinator, pet))
@@ -126,8 +122,7 @@ async def async_setup_entry(hass, config_entry, async_add_devices):
     for base in coordinator.data.bases:
         new_devices.append(FiBaseSensor(coordinator, base))
 
-    if new_devices:
-        async_add_devices(new_devices)
+    async_add_devices(new_devices)
 
 
 class FiBaseSensor(FiBaseEntity, SensorEntity):
@@ -209,10 +204,9 @@ class PetConnectionSensor(FiPetEntity, SensorEntity):
 class PetBehaviorSensor(FiPetEntity, SensorEntity):
     """Count of Fi-detected behaviour events today, with their times attached."""
 
-    # Resets to 0 at local midnight like every other daily stat, and Fi revises
-    # its counts, so this is not total_increasing either. For a per-day view,
-    # chart the daily max.
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    # A daily total like the stats: it resets at Fi's start of the day, and Fi
+    # revises its counts, so this is not total_increasing either.
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "events"
 
     def __init__(self, coordinator, pet, behavior):
@@ -238,6 +232,10 @@ class PetBehaviorSensor(FiPetEntity, SensorEntity):
     @property
     def native_value(self):
         return len(self._events)
+
+    @property
+    def last_reset(self):
+        return self.pet.period_starts.get("DAILY")
 
     @property
     def extra_state_attributes(self):
@@ -286,6 +284,12 @@ class PetStatsSensor(FiPetEntity, SensorEntity):
     @property
     def state_class(self):
         return self._meta["state_class"]
+
+    @property
+    def last_reset(self):
+        if self.state_class is not SensorStateClass.TOTAL:
+            return None
+        return self.pet.period_starts.get(self._stat_time)
 
     @property
     def suggested_display_precision(self):

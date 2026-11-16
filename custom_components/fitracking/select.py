@@ -1,13 +1,9 @@
 """Lost-mode switch for the Fi collar."""
 
-import logging
-
 from homeassistant.components.select import SelectEntity
 
 from .const import DOMAIN
-from .entity import FiPetEntity
-
-LOGGER = logging.getLogger(__name__)
+from .entity import FiPetEntity, collared_pets
 
 SAFE = "Safe"
 LOST = "Lost"
@@ -17,14 +13,7 @@ async def async_setup_entry(hass, config_entry, async_add_devices):
     """Add selects for passed config_entry in HA."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
 
-    new_devices = []
-    for pet in coordinator.data.pets:
-        if pet.device is None:
-            LOGGER.warning("Skipping pet %s: no collar paired", pet.name)
-            continue
-        new_devices.append(FiLostMode(coordinator, pet))
-    if new_devices:
-        async_add_devices(new_devices)
+    async_add_devices(FiLostMode(coordinator, pet) for pet in collared_pets(coordinator))
 
 
 class FiLostMode(FiPetEntity, SelectEntity):

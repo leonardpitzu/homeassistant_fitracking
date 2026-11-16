@@ -36,14 +36,18 @@ async def _async_check_credentials(hass: core.HomeAssistant, username: str, pass
     await client.async_login()
 
 
+def _check_polling(value: object) -> None:
+    try:
+        valid = int(value) >= 1
+    except (TypeError, ValueError):
+        valid = False
+    if not valid:
+        raise InvalidPolling
+
+
 async def validate_input(hass: core.HomeAssistant, data: dict) -> dict[str, str]:
     """Check the polling rate and prove the credentials work."""
-    try:
-        if int(data[CONF_POLLING_RATE]) < 1:
-            raise InvalidPolling
-    except (TypeError, ValueError) as err:
-        raise InvalidPolling from err
-
+    _check_polling(data[CONF_POLLING_RATE])
     await _async_check_credentials(hass, data[CONF_USERNAME], data[CONF_PASSWORD])
     return {"title": data[CONF_USERNAME]}
 
@@ -115,9 +119,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         errors = {}
         if user_input is not None:
             try:
-                if int(user_input[CONF_POLLING_RATE]) < 1:
-                    raise InvalidPolling
-            except (TypeError, ValueError, InvalidPolling):
+                _check_polling(user_input[CONF_POLLING_RATE])
+            except InvalidPolling:
                 errors["base"] = "invalid_polling"
             else:
                 return self.async_create_entry(title="", data=user_input)

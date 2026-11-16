@@ -2,7 +2,9 @@ from .api.models import PERIODS
 
 DOMAIN = "fitracking"
 PLATFORMS = ["device_tracker", "light", "sensor", "select", "binary_sensor"]
-DEFAULT_POLLING_RATE = "10"
+# Fi's figures move about once a minute and every poll fetches the whole day,
+# so a slower poll loses nothing; it only shows a change that much later.
+DEFAULT_POLLING_RATE = "30"
 CONF_POLLING_RATE = "polling"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"

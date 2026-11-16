@@ -24,17 +24,20 @@ Activity and rest statistics are created for every combination of period (`daily
 
 | Metric | Unit | Device class | State class |
 |---|---|---|---|
-| Steps | `steps` | – | `measurement` |
-| Distance | `km` | `distance` | `measurement` |
-| Sleep | `min` | `duration` | `measurement` |
-| Nap | `min` | `duration` | `measurement` |
-| Active | `min` | `duration` | `measurement` |
+| Steps | `steps` | – | `total` |
+| Distance | `km` | `distance` | `total` |
+| Sleep | `min` | `duration` | `total` |
+| Nap | `min` | `duration` | `total` |
+| Active | `min` | `duration` | `total` |
 | Goal | `steps` | – | `measurement` |
 
-None of these are `total_increasing`. Every value does reset at the start of its
-period, but Fi also revises them downward after first reporting them, and Home
-Assistant's 10% reset tolerance is relative — so a 30 m correction to a 50 m
-morning walk reads as a counter reset and adds a phantom cycle to the sum.
+The totals reset at the start of their period, and each carries that start —
+Fi's own, read with every refresh — as `last_reset`, so Home Assistant sees a
+new day, week or month for what it is. None of them are `total_increasing`:
+Fi also revises them downward after first reporting them, and Home Assistant's
+10% reset tolerance is relative — so a 30 m correction to a 50 m morning walk
+would read as a counter reset and add a phantom cycle to the sum. `Goal` is a
+target, not a total, and stays `measurement`.
 
 `Sleep` and `Nap` are whole minutes, which is how they have always been shown.
 While the pet sleeps, Fi counts the seconds up with the clock between the
@@ -170,23 +173,29 @@ about an hour, and backdates the night to when the pet lay down — never earlie
 than 20:00. Until then the evening rest is `day_sleep`, as Fi counts it; once
 Fi starts the night the state turns `night_sleep` and the bar redraws from the
 backdated start. `Daily Nap` drops and `Daily Sleep` rises by the same minutes
-at that moment, so the daily `max` of `Daily Nap` overstates naps on such an
-evening — its last value of the day is Fi's final figure.
+at that moment. The day's `change` statistic follows the move, so it ends on
+Fi's final figure for both.
 
 A nap straight after getting up shows as `night_sleep` until the night settles,
 then as `day_sleep`. Until then Fi may still carry the night on over it, as it
 does over a stir, and its answers cannot tell the two apart any sooner: a stir
 differs from a nap only in Fi moving the end one poll after redrawing the bar.
 
-Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `max`:
+Because every statistic carries a state class, they are recorded as **long-term statistics** and can be charted over months. For a per-day view, chart the daily `change` — what the total gained that day, which for a daily total is the day's figure:
 
 ```yaml
 type: statistics-graph
 entities: [sensor.rex_daily_distance]
 period: day
-stat_types: [max]
+stat_types: [change]
 chart_type: bar
 ```
+
+Up to version 2.10 these sensors were `measurement`. Statistics recorded until
+then keep their `min`/`max`/`mean`; from the upgrade on they carry `change` and
+`sum`, so a long chart shows a break on that day. A daily `max` was never
+reliable: the last value of a day lingers for a few seconds into the next one,
+which made each day's `max` at least the previous day's total.
 
 ### Behaviour sensors
 
@@ -209,11 +218,11 @@ events: ["2026-09-19T01:27:28+03:00", "2026-09-19T01:29:52+03:00"]
 last_event: "2026-09-19T01:29:52+03:00"
 ```
 
-The counts reset at local midnight and use `measurement` for the same reason as
+The counts reset at local midnight and are `total` with `last_reset`, like
 the activity statistics above. They are fetched directly from Fi's
 `getPetHealthTrendsForPet` query. For a few minutes after midnight Fi still
 serves yesterday's chart, which would date yesterday's events to later today and
-start each day's `max` at yesterday's total; a chart holding an event later than
+count them a second time; a chart holding an event later than
 now is therefore read as no events yet.
 
 ### Binary sensor
@@ -249,7 +258,7 @@ Add the integration from **Settings → Devices & Services → Add Integration �
 |---|---|
 | Username | The e-mail address of your Fi account |
 | Password | Your Fi account password |
-| Polling | Seconds between updates (default `10`, minimum `1`) |
+| Polling | Seconds between updates (default `30`, minimum `1`). Every refresh fetches the whole day, so a slower rate loses nothing; a change just shows that much later |
 
 The polling rate can be changed later from the integration's **Configure** dialog; the entry reloads automatically so the new value takes effect immediately.
 
@@ -716,6 +725,7 @@ Bluetooth range.
 | Account email no longer polled | The device fragment pulled `UserDetails` — email, phone — into every refresh |
 | Rest clipped to the calendar period | Upstream read `restSummaryFeed`, which files a night under the day it began, so `Daily Sleep` showed `0` all morning while the app showed the night's hours |
 | Weekly and monthly sleep include the night across the period start | Fi counts a night whole in the week or month it began in, so the first morning of a period showed `0` sleep until the next evening |
+| Totals reset where Fi resets them | The period totals were `measurement`, so a day's `max` carried over the previous day's last value; they are `total` with Fi's period start as `last_reset` |
 | `Last Night Sleep` and `Resting Since` | A calendar day splits a night in two; neither sensor exists upstream |
 | Goal sensors added | Upstream left `# FUTURE COULD INCLUDE STEP GOAL`; the values were already available |
 | Migrated to `SensorEntity` | Entities inherited plain `Entity`, so no `state_class` was possible and no long-term statistics were recorded |

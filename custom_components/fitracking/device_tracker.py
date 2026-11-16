@@ -1,27 +1,16 @@
 """Device tracker for the Fi collar."""
 
-import logging
-
 from homeassistant.components.device_tracker import SourceType, TrackerEntity
 
 from .const import DOMAIN
-from .entity import FiPetEntity
-
-LOGGER = logging.getLogger(__name__)
+from .entity import FiPetEntity, collared_pets
 
 
 async def async_setup_entry(hass, config_entry, async_add_devices):
     """Add trackers for passed config_entry in HA."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
 
-    new_devices = []
-    for pet in coordinator.data.pets:
-        if pet.device is None:
-            LOGGER.warning("Skipping pet %s: no collar paired", pet.name)
-            continue
-        new_devices.append(FiPetTracker(coordinator, pet))
-    if new_devices:
-        async_add_devices(new_devices)
+    async_add_devices(FiPetTracker(coordinator, pet) for pet in collared_pets(coordinator))
 
 
 class FiPetTracker(FiPetEntity, TrackerEntity):

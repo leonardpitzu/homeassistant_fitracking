@@ -8,6 +8,11 @@ from .api import Base, Device, Pet
 from .const import DOMAIN, MANUFACTURER
 
 
+def collared_pets(coordinator) -> list[Pet]:
+    """The pets a platform builds entities for: those with a collar paired."""
+    return [pet for pet in coordinator.data.pets if pet.device is not None]
+
+
 class FiPetEntity(CoordinatorEntity):
     """Base for anything hanging off a pet's collar."""
 

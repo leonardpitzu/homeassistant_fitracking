@@ -52,6 +52,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = FiDataUpdateCoordinator(hass, client, int(polling_rate))
     await coordinator.async_config_entry_first_refresh()
 
+    for pet in coordinator.data.pets:
+        if pet.device is None:
+            LOGGER.warning("Skipping pet %s: no collar paired", pet.name)
+
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 

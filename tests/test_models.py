@@ -279,13 +279,13 @@ def test_ongoing_rest_records_when_it_started():
             ongoingActivity={
                 "__typename": "OngoingRest",
                 "start": "2026-09-19T17:15:57.919Z",
-                "position": {"latitude": 45.65, "longitude": 25.6},
+                "position": {"latitude": 10.5, "longitude": 20.5},
                 "place": {"name": "Home", "address": "Somewhere"},
             }
         )
     )
     assert pet.resting_since == datetime(2026, 9, 19, 17, 15, 57, 919000, tzinfo=UTC)
-    assert pet.latitude == 45.65
+    assert pet.latitude == 10.5
     assert pet.place_name == "Home"
 
 

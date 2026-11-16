@@ -1,6 +1,7 @@
 """Tests for the Fi Tracking sensor platform."""
 
 from dataclasses import fields
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from types import SimpleNamespace
 
@@ -22,7 +23,13 @@ from custom_components.fitracking.const import (
     SENSOR_STATS_BY_TIME,
     SENSOR_STATS_BY_TYPE,
 )
-from custom_components.fitracking.sensor import STAT_META, PetBehaviorSensor, PetDayPhaseSensor, scale_stat
+from custom_components.fitracking.sensor import (
+    STAT_META,
+    PetBehaviorSensor,
+    PetDayPhaseSensor,
+    PetStatsSensor,
+    scale_stat,
+)
 
 STATS_FIELDS = {field.name for field in fields(Stats)}
 
@@ -106,11 +113,24 @@ def test_no_sensor_is_a_counter():
     HA's reset tolerance is relative, so a small absolute revision early in a
     period is a large enough drop to read as a counter reset and inflate the sum.
     """
-    state_classes = [meta["state_class"] for meta in STAT_META.values()]
+    state_classes = {stat: meta["state_class"] for stat, meta in STAT_META.items()}
     # HA's entity metaclass turns _attr_state_class into a descriptor, so the
     # value only resolves through the public property on an instance.
-    state_classes.append(object.__new__(PetBehaviorSensor).state_class)
-    assert all(state_class is SensorStateClass.MEASUREMENT for state_class in state_classes)
+    state_classes["behavior"] = object.__new__(PetBehaviorSensor).state_class
+    assert state_classes.pop("GOAL") is SensorStateClass.MEASUREMENT
+    assert set(state_classes.values()) == {SensorStateClass.TOTAL}
+
+
+def test_totals_reset_where_fi_starts_the_period():
+    """`last_reset` is Fi's own period start, so HA sees the new period."""
+    week = datetime(2026, 9, 14, tzinfo=UTC)
+    day = datetime(2026, 9, 19, tzinfo=UTC)
+    pet = Pet(pet_id="p1", name="Rex", period_starts={"WEEKLY": week, "DAILY": day})
+    coordinator = SimpleNamespace(data=SimpleNamespace(get_pet=lambda _: pet))
+    assert PetStatsSensor(coordinator, pet, "SLEEP", "WEEKLY").last_reset == week
+    assert PetStatsSensor(coordinator, pet, "STEPS", "MONTHLY").last_reset is None
+    assert PetStatsSensor(coordinator, pet, "GOAL", "WEEKLY").last_reset is None
+    assert PetBehaviorSensor(coordinator, pet, "barking").last_reset == day
 
 
 def test_day_phase_holds_the_night_over_midnight():
